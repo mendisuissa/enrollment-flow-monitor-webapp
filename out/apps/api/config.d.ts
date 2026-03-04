@@ -1,12 +1,12 @@
 export declare const config: {
     port: number;
-    nodeEnv: any;
+    nodeEnv: string;
     mockMode: boolean;
-    databaseUrl: any;
-    logFile: any;
-    sessionSecret: any;
-    webAppUrl: any;
-    corsOrigins: any;
+    databaseUrl: string;
+    logFile: string;
+    sessionSecret: string;
+    webAppUrl: string;
+    corsOrigins: string[];
     refreshIntervalSeconds: number;
     incidentWindowMinutes: number;
     incidentThresholdCount: number;
@@ -16,11 +16,11 @@ export declare const config: {
         High: number;
     };
     entra: {
-        tenantId: any;
-        clientId: any;
-        clientSecret: any;
-        redirectUri: any;
-        scopes: any;
+        tenantId: string;
+        clientId: string;
+        clientSecret: string;
+        redirectUri: string;
+        scopes: string[];
     };
 };
 export declare function authConfigured(): boolean;

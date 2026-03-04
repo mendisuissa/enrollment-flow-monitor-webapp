@@ -1,4 +1,4 @@
-export declare const api: any;
+export declare const api: import("axios").AxiosInstance;
 export interface ViewResponse {
     rows: Record<string, unknown>[];
     message: string;

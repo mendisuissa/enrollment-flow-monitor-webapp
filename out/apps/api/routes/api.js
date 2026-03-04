@@ -6,6 +6,7 @@ import { buildIncidents } from '../engines/incidents.js';
 import { getDataBundle } from '../graph/provider.js';
 import { logger } from '../utils/logger.js';
 import { PrismaIncidentRepository } from '../storage/incidentRepository.js';
+import { enrollmentErrorCatalog } from '../catalog/enrollmentErrors.js';
 const incidentRepo = new PrismaIncidentRepository();
 function ensureConnected(req, res, next) {
     if (config.mockMode || req.session?.accessToken)
