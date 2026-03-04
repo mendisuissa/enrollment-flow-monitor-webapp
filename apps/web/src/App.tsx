@@ -44,6 +44,7 @@ export default function App() {
   const [ocrStatusText, setOcrStatusText] = useState('OCR: Not started');
   const [ocrAssistantAnswer, setOcrAssistantAnswer] = useState('');
   const [ocrBusy, setOcrBusy] = useState(false);
+
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
     const stored = window.localStorage.getItem('efm-theme');
     if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
@@ -55,6 +56,9 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // ✅ FIX: badge counts state for sidebar
+  const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({});
 
   function addToast(kind: Toast['kind'], message: string) {
     const id = Date.now() + Math.floor(Math.random() * 1000);
@@ -99,14 +103,16 @@ export default function App() {
       const safeRows = Array.isArray(result.rows) ? result.rows : [];
       setRows(safeRows);
       setSelectedIndex(safeRows.length > 0 ? 0 : null);
-      setStatusMessage\(result\.message \|\| `\$\{view\} loaded\.`\);
+      setStatusMessage(result.message || `${view} loaded.`);
 
       // Update sidebar badges
       setBadgeCounts((prev) => {
         const next = { ...prev };
-        const count = view === 'incidents'
-          ? safeRows.filter((r) => !(r as any).isPlaceholder).length
-          : safeRows.length;
+        const count =
+          view === 'incidents'
+            ? safeRows.filter((r) => !(r as any).isPlaceholder).length
+            : safeRows.length;
+
         next[view] = count;
 
         if (view === 'dashboard' && safeRows[0]) {
@@ -131,7 +137,9 @@ export default function App() {
         setDetailsText('The endpoint returned an empty dataset. This is handled safely.');
       } else {
         const first = safeRows[0];
-        setDetailsSummary(toText(first['name'] ?? first['deviceName'] ?? first['displayName'] ?? first['summary'] ?? `${view} row selected`));
+        setDetailsSummary(
+          toText(first['name'] ?? first['deviceName'] ?? first['displayName'] ?? first['summary'] ?? `${view} row selected`)
+        );
         setDetailsText(toText(first['details'] ?? first));
       }
     } catch (error) {
@@ -316,10 +324,16 @@ export default function App() {
         recommendedActions?: string[];
       };
 
-      const category = typeof payload.category === 'string' && payload.category.trim().length > 0 ? payload.category : 'Unknown';
+      const category =
+        typeof payload.category === 'string' && payload.category.trim().length > 0 ? payload.category : 'Unknown';
       const confidence = Number.isFinite(payload.confidence) ? payload.confidence : 0;
-      const cause = typeof payload.cause === 'string' && payload.cause.trim().length > 0 ? payload.cause : 'No explicit cause returned by analyzer.';
-      const actions = Array.isArray(payload.recommendedActions) ? payload.recommendedActions.filter((action) => typeof action === 'string' && action.trim().length > 0) : [];
+      const cause =
+        typeof payload.cause === 'string' && payload.cause.trim().length > 0
+          ? payload.cause
+          : 'No explicit cause returned by analyzer.';
+      const actions = Array.isArray(payload.recommendedActions)
+        ? payload.recommendedActions.filter((action) => typeof action === 'string' && action.trim().length > 0)
+        : [];
 
       const answer = [
         `Category: ${category}`,
@@ -338,11 +352,9 @@ export default function App() {
       addToast('success', 'OCR explanation generated.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to generate OCR explanation.';
-      const fallback = [
-        'Explanation failed.',
-        `Reason: ${message}`,
-        'Try pasting only the exact error sentence and run again.'
-      ].join('\n');
+      const fallback = ['Explanation failed.', `Reason: ${message}`, 'Try pasting only the exact error sentence and run again.'].join(
+        '\n'
+      );
       setOcrAssistantAnswer(fallback);
       setDetailsSummary('OCR Explanation Failed');
       setDetailsText(fallback);
@@ -444,19 +456,19 @@ export default function App() {
         ) : (
           <div className="panel">
             <div className="nav-list">
-                  {views.map((view) => (
-                    <button
-                      key={view.id}
-                      className={`nav-btn ${currentView === view.id ? 'active' : ''}`}
-                      onClick={() => setCurrentView(view.id as ExtendedViewName)}
-                    >
-                      <span className={`nav-icon ${view.id === 'windowsEnrollment' ? 'nav-icon-device' : ''}`}>{view.icon}</span>
-                      <span className="nav-label">{view.label}</span>
-                      {badgeCounts[view.id] ? (
-                        <span className="badge" title="Count">{badgeCounts[view.id]}</span>
-                      ) : null}
-                    </button>
-                  ))}
+              {views.map((view) => (
+                <button
+                  key={view.id}
+                  className={`nav-btn ${currentView === view.id ? 'active' : ''}`}
+                  onClick={() => setCurrentView(view.id as ExtendedViewName)}
+                >
+                  <span className={`nav-icon ${view.id === 'windowsEnrollment' ? 'nav-icon-device' : ''}`}>{view.icon}</span>
+                  <span className="nav-label">{view.label}</span>
+                  {badgeCounts[view.id] ? (
+                    <span className="badge" title="Count">{badgeCounts[view.id]}</span>
+                  ) : null}
+                </button>
+              ))}
               <div className="section-divider" />
               <button className="btn btn-secondary text-left" onClick={() => onExport('csv')} disabled={!auth.connected}>Export CSV</button>
               <button className="btn btn-secondary text-left" onClick={() => onExport('json')} disabled={!auth.connected}>Export JSON</button>
@@ -565,9 +577,18 @@ export default function App() {
 
         <div className="panel">
           <div className="font-semibold text-xl mb-2">Summary</div>
-          <div className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>{currentView === 'ocr' ? 'OCR Assistant Answer' : detailsSummary}</div>
+          <div className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
+            {currentView === 'ocr' ? 'OCR Assistant Answer' : detailsSummary}
+          </div>
           <div className="font-semibold text-xl mb-2">Details</div>
-          <pre className="text-xs whitespace-pre-wrap rounded-lg p-3" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>{currentView === 'ocr' ? (ocrAssistantAnswer || 'No explanation yet. Pick image or paste text, then click Get Explanation.') : detailsText}</pre>
+          <pre
+            className="text-xs whitespace-pre-wrap rounded-lg p-3"
+            style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}
+          >
+            {currentView === 'ocr'
+              ? (ocrAssistantAnswer || 'No explanation yet. Pick image or paste text, then click Get Explanation.')
+              : detailsText}
+          </pre>
         </div>
       </div>
 
