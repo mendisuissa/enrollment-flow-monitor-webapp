@@ -42,10 +42,6 @@ function mapDevice(item: Record<string, unknown>): ManagedDevice {
     serialNumber: asString(item.serialNumber, ''),
     joinType: asString(item.joinType, ''),
     deviceEnrollmentType: asString(item.deviceEnrollmentType, '')
-  };,
-    serialNumber: asString(item.serialNumber, undefined as any),
-    joinType: asString(item.joinType, undefined as any),
-    deviceEnrollmentType: asString(item.deviceEnrollmentType, undefined as any)
   };
 }
 

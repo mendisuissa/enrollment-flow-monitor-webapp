@@ -16,13 +16,21 @@ const currentDir = path.dirname(currentFilePath);
 const webDistPath = path.resolve(currentDir, '../web');
 const webIndexPath = path.join(webDistPath, 'index.html');
 app.use(pinoHttp({ logger: requestLogger }));
+// IMPORTANT:
+// Do NOT throw on unknown origins.
+// Throwing here causes 500 responses which breaks loading same-origin static assets
+// (scripts/styles) on Azure App Service when Origin is present.
+// For non-allowed origins we simply disable CORS headers (browser will block XHR/fetch).
 app.use(cors({
     origin: (origin, callback) => {
-        if (!origin || config.corsOrigins.includes(origin)) {
-            callback(null, true);
-            return;
-        }
-        callback(new Error('CORS origin denied.'));
+        // Allow requests with no origin (curl, health probes, etc.)
+        if (!origin)
+            return callback(null, true);
+        // Explicit allow-list
+        if (config.corsOrigins.includes(origin))
+            return callback(null, true);
+        // Not allowed: don't set CORS headers, but don't fail the request.
+        return callback(null, false);
     },
     credentials: true
 }));

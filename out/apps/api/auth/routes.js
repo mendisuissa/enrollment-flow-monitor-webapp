@@ -10,7 +10,7 @@ function getRequestOrigin(req) {
     return `${protocol}://${host}`;
 }
 authRouter.get('/status', (req, res) => {
-    if (!req.session.account || !req.session.accessToken) {
+    if (!req.session?.account || !req.session?.accessToken) {
         return res.json({ connected: false, upn: '', tenantId: '', displayName: '' });
     }
     return res.json({
@@ -18,6 +18,60 @@ authRouter.get('/status', (req, res) => {
         upn: req.session.account.username ?? '',
         tenantId: req.session.account.tenantId ?? '',
         displayName: req.session.account.name ?? ''
+    });
+});
+/**
+ * NEW: /api/auth/me
+ * Use this to verify session state quickly from browser.
+ */
+authRouter.get('/me', (req, res) => {
+    if (!req.session?.account) {
+        return res.status(401).json({ connected: false });
+    }
+    return res.json({
+        connected: true,
+        account: req.session.account ?? null
+    });
+});
+/**
+ * NEW: /api/auth/debug/token
+ * Decodes JWT payload and returns scopes/roles for troubleshooting.
+ * IMPORTANT: disable this endpoint in production if you don't want it exposed.
+ */
+authRouter.get('/debug/token', (req, res) => {
+    const accessToken = req.session?.accessToken;
+    if (!accessToken) {
+        return res.status(401).json({
+            connected: false,
+            message: 'No access token in session'
+        });
+    }
+    const parts = accessToken.split('.');
+    if (parts.length < 2) {
+        return res.status(400).json({
+            connected: true,
+            message: 'Token does not look like a JWT',
+            tokenPreview: accessToken.substring(0, 40) + '...'
+        });
+    }
+    let payload = null;
+    try {
+        payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    }
+    catch {
+        payload = 'Unable to decode token payload';
+    }
+    return res.json({
+        connected: true,
+        user: req.session?.account ?? null,
+        tokenPreview: accessToken.substring(0, 40) + '...',
+        // Delegated scopes usually appear as scp. App permissions appear as roles.
+        scopes: payload?.scp ?? null,
+        roles: payload?.roles ?? null,
+        tenantId: payload?.tid ?? null,
+        audience: payload?.aud ?? null,
+        expires: payload?.exp ?? null,
+        issuedAt: payload?.iat ?? null
     });
 });
 authRouter.get('/login', async (req, res) => {
@@ -66,7 +120,7 @@ authRouter.get('/callback', async (req, res) => {
     }
 });
 authRouter.post('/logout', (req, res) => {
-    req.session.destroy(() => {
+    req.session?.destroy(() => {
         res.json({ ok: true });
     });
 });

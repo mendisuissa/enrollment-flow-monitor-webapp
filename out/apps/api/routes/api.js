@@ -5,18 +5,16 @@ import { normalizeStatus } from '../engines/normalization.js';
 import { buildIncidents } from '../engines/incidents.js';
 import { getDataBundle } from '../graph/provider.js';
 import { logger } from '../utils/logger.js';
-import { toCsv } from '../utils/safe.js';
 import { PrismaIncidentRepository } from '../storage/incidentRepository.js';
 const incidentRepo = new PrismaIncidentRepository();
 function ensureConnected(req, res, next) {
-    if (config.mockMode || req.session?.accessToken) {
-        next();
-        return;
-    }
+    if (config.mockMode || req.session?.accessToken)
+        return next();
     res.status(401).json({ message: 'Not connected. Click Connect first.' });
 }
 async function getViewData(accessToken) {
     const bundle = await getDataBundle(accessToken);
+    // Normalize app status rows (if any)
     const statuses = [];
     for (const row of bundle.appStatuses ?? []) {
         const normalized = await normalizeStatus(row);
@@ -25,91 +23,41 @@ async function getViewData(accessToken) {
             normalizedCategory: normalized.normalizedCategory,
             cause: normalized.cause,
             confidence: normalized.confidence,
-            recommendedActions: normalized.recommendedActions,
-            const: incidents = buildIncidents(statuses),
-            try: {
-                await: incidentRepo.upsertMany(incidents)
-            }, catch(error) {
-                logger.warn({ err: error }, 'Incident persistence failed; continuing with in-memory incidents.');
-            },
-            const: mergedUsers = new Map(),
-            for(, user, of, bundle) { }, : .users ?? []
+            recommendedActions: normalized.recommendedActions
         });
-        {
-            const upn = (user.userPrincipalName ?? '').trim().toLowerCase();
-            if (!upn) {
-                continue;
-            }
-            mergedUsers.set(upn, {
-                id: user.id,
-                displayName: user.displayName,
-                userPrincipalName: user.userPrincipalName,
-                mail: user.mail
-            });
-        }
-        for (const device of bundle.devices ?? []) {
-            const upn = (device.userPrincipalName ?? '').trim().toLowerCase();
-            if (!upn || mergedUsers.has(upn)) {
-                continue;
-            }
-            mergedUsers.set(upn, {
-                id: `device:${upn}`,
-                displayName: device.userDisplayName || upn.split('@')[0],
-                userPrincipalName: upn,
-                mail: upn
-            });
-        }
-        for (const status of statuses) {
-            if (status.targetType !== 'user') {
-                continue;
-            }
-            const candidate = (status.targetName ?? '').trim().toLowerCase();
-            if (!candidate.includes('@') || mergedUsers.has(candidate)) {
-                continue;
-            }
-            mergedUsers.set(candidate, {
-                id: `status:${candidate}`,
-                displayName: status.targetName,
-                userPrincipalName: candidate,
-                mail: candidate
-            });
-        }
-        const users = Array.from(mergedUsers.values()).sort((left, right) => left.displayName.localeCompare(right.displayName));
-        try {
-            const view = String(req.params.view).toLowerCase();
-            const data = await getViewData(req.session.accessToken);
-            if (view === 'dashboard') {
-                return res.json({ rows: [buildDashboard(data)], message: 'Dashboard loaded.' });
-            }
-            // ...existing code...
-            return res.status(400).json({ message: `Unsupported view: ${view}` });
-        }
-        catch (error) {
-            // Log the full error object
-            console.error('API /view error:', error);
-            if (error instanceof Error) {
-                return res.status(500).json({ message: error.message, stack: error.stack, error });
-            }
-            else {
-                return res.status(500).json({ message: 'Failed to load view.', error });
-            }
-        }
     }
-    ;
-    const macDevices = data.devices.filter((device) => (device.operatingSystem ?? '').toLowerCase().includes('mac'));
-    const autopilotReady = windowsDevices.filter((device) => (device.complianceState ?? '').toLowerCase() === 'compliant');
-    const userDriven = windowsDevices.filter((device) => (device.userPrincipalName ?? '').includes('@'));
-    const automatic = windowsDevices.filter((device) => !(device.userPrincipalName ?? '').includes('@'));
-    const enrollmentHealth = [
-        { category: 'Compliant', count: autopilotReady.length },
-        { category: 'Non-compliant', count: Math.max(0, windowsDevices.length - autopilotReady.length) },
-        { category: 'Stale Sync (>7 days)', count: windowsDevices.filter((device) => {
-                const stamp = Date.parse(device.lastSyncDateTime ?? '');
-                if (Number.isNaN(stamp))
-                    return false;
-                return (Date.now() - stamp) / (1000 * 60 * 60 * 24) > 7;
-            }).length }
-    ];
+    // Build + persist incidents (best effort)
+    const incidents = buildIncidents(statuses);
+    try {
+        await incidentRepo.upsertMany(incidents);
+    }
+    catch (error) {
+        logger.warn({ err: error }, 'Incident persistence failed; continuing with in-memory incidents.');
+    }
+    return {
+        apps: bundle.apps ?? [],
+        devices: bundle.devices ?? [],
+        users: bundle.users ?? [],
+        statuses,
+        incidents
+    };
+}
+function buildDashboard(data) {
+    const windowsDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('windows'));
+    const mobileDevices = data.devices.filter((d) => {
+        const os = (d.operatingSystem ?? '').toLowerCase();
+        return os.includes('ios') || os.includes('android') || os.includes('ipados');
+    });
+    const macDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('mac'));
+    const autopilotReady = windowsDevices.filter((d) => (d.complianceState ?? '').toLowerCase() === 'compliant');
+    const userDriven = windowsDevices.filter((d) => (d.userPrincipalName ?? '').includes('@'));
+    const automatic = windowsDevices.filter((d) => !(d.userPrincipalName ?? '').includes('@'));
+    const stale = windowsDevices.filter((d) => {
+        const stamp = Date.parse(d.lastSyncDateTime ?? '');
+        if (Number.isNaN(stamp))
+            return false;
+        return (Date.now() - stamp) / (1000 * 60 * 60 * 24) > 7;
+    }).length;
     return {
         totalDevices: data.devices.length,
         windowsEnrollmentDevices: windowsDevices.length,
@@ -117,11 +65,15 @@ async function getViewData(accessToken) {
         autopilotAutomaticDevices: automatic.length,
         mobileEnrollmentDevices: mobileDevices.length,
         macEnrollmentDevices: macDevices.length,
-        topEnrollmentStates: enrollmentHealth,
+        topEnrollmentStates: [
+            { category: 'Compliant', count: autopilotReady.length },
+            { category: 'Non-compliant', count: Math.max(0, windowsDevices.length - autopilotReady.length) },
+            { category: 'Stale Sync (>7 days)', count: stale }
+        ],
         lastRefresh: new Date().toISOString()
     };
 }
-function buildDevicesGrid(data) {
+function buildWindowsEnrollmentGrid(data) {
     return data.devices.map((device) => ({
         id: device.id,
         deviceName: device.deviceName,
@@ -152,30 +104,6 @@ function buildAutopilotUserDrivenGrid(data) {
 function buildAutopilotPreProvisioningGrid(data) {
     return buildAutopilotAllGrid(data).filter((row) => !String(row.userPrincipalName).includes('@'));
 }
-function buildStaticComingSoonGrid(flow) {
-    return [{
-            id: `${flow.toLowerCase().replace(/\s+/g, '-')}-coming-soon`,
-            flow,
-            status: 'Coming next',
-            details: `${flow} telemetry is scaffolded and will be connected in the next iteration.`
-        }];
-}
-function buildStatusesGrid(data) {
-    return data.statuses.map((row) => ({
-        id: row.id,
-        appName: row.appName,
-        targetType: row.targetType,
-        targetName: row.targetName,
-        installState: row.installState,
-        errorCode: row.errorCode || 'Unknown',
-        errorDescription: row.errorDescription || 'Unknown',
-        normalizedCategory: row.normalizedCategory || 'Unknown',
-        confidence: row.confidence,
-        lastReportedDateTime: row.lastReportedDateTime,
-        recommendedActions: row.recommendedActions,
-        details: `App: ${row.appName}\nState: ${row.installState}\nErrorCode: ${row.errorCode || 'Unknown'}\nErrorDescription: ${row.errorDescription || 'Unknown'}\nCategory: ${row.normalizedCategory || 'Unknown'}`
-    }));
-}
 function buildOcrGrid(data) {
     const rows = data.statuses.map((row) => ({
         id: row.id,
@@ -186,74 +114,93 @@ function buildOcrGrid(data) {
         errorCode: row.errorCode || 'Unknown',
         errorDescription: row.errorDescription || 'Unknown',
         cause: row.cause || 'Unknown',
-        recommendedActions: row.recommendedActions.join(' | '),
+        recommendedActions: (row.recommendedActions ?? []).join(' | '),
         details: `App: ${row.appName}\nTarget: ${row.targetName}\nCategory: ${row.normalizedCategory || 'Unknown'}\nCause: ${row.cause || 'Unknown'}\nConfidence: ${row.confidence}`
     }));
-    if (rows.length > 0) {
+    if (rows.length > 0)
         return rows;
-    }
-    const deviceFallback = data.devices
-        .filter((device) => (device.deviceName ?? '').trim().length > 0)
-        .slice(0, 200)
-        .map((device) => {
-        const compliance = (device.complianceState ?? 'unknown').toLowerCase();
-        const isHealthy = compliance === 'compliant';
-        const category = isHealthy ? 'DeviceHealth' : 'ComplianceRisk';
-        const cause = isHealthy
+    // Fallback: show device baseline if app status telemetry is empty
+    const deviceFallback = data.devices.slice(0, 200).map((device) => ({
+        id: `device-ocr:${device.id}`,
+        appName: 'Device Compliance Baseline',
+        targetName: device.deviceName,
+        normalizedCategory: (device.complianceState ?? '').toLowerCase() === 'compliant' ? 'DeviceHealth' : 'ComplianceRisk',
+        confidence: (device.complianceState ?? '').toLowerCase() === 'compliant' ? 0.45 : 0.7,
+        errorCode: (device.complianceState ?? '').toLowerCase() === 'compliant' ? '-' : 'DEVICE_NONCOMPLIANT',
+        errorDescription: (device.complianceState ?? '').toLowerCase() === 'compliant' ? 'Compliant device baseline signal.' : 'Non-compliant device signal from managedDevices.',
+        cause: (device.complianceState ?? '').toLowerCase() === 'compliant'
             ? 'Device is reporting compliant state; app-level telemetry is not currently available.'
-            : `Device reports ${device.complianceState} compliance state.`;
-        return {
-            id: `device-ocr:${device.id}`,
-            appName: 'Device Compliance Baseline',
-            targetName: device.deviceName,
-            normalizedCategory: category,
-            confidence: isHealthy ? 0.45 : 0.7,
-            errorCode: isHealthy ? '-' : 'DEVICE_NONCOMPLIANT',
-            errorDescription: isHealthy ? 'Compliant device baseline signal.' : 'Non-compliant device signal from managedDevices.',
-            cause,
-            recommendedActions: isHealthy
-                ? 'Assign at least one required app and wait for Intune status telemetry to populate OCR app analysis.'
-                : 'Open device in Intune and review compliance policies, app assignment state, and recent check-in.',
-            details: `Device: ${device.deviceName}\nCompliance: ${device.complianceState}\nOS: ${device.operatingSystem} ${device.osVersion}\nLast Sync: ${device.lastSyncDateTime}`
-        };
-    });
-    if (deviceFallback.length > 0) {
-        return deviceFallback;
-    }
-    return [
-        {
-            id: 'ocr-empty',
-            appName: 'No OCR telemetry yet',
-            targetName: '-',
-            normalizedCategory: 'DataUnavailable',
-            confidence: 0,
-            errorCode: '-',
-            errorDescription: 'No app installation status rows were returned from Graph.',
-            cause: 'Either there are currently no app status events, or delegated permissions are not sufficient.',
-            recommendedActions: 'Grant admin consent for DeviceManagementApps.Read.All and refresh again.',
-            details: 'OCR needs app status telemetry. Verify Microsoft Graph delegated permissions and Intune app assignment/status availability.'
-        }
-    ];
+            : `Device reports ${device.complianceState} compliance state.`,
+        recommendedActions: (device.complianceState ?? '').toLowerCase() === 'compliant'
+            ? 'Assign at least one required app and wait for Intune status telemetry to populate.'
+            : 'Open device in Intune and review compliance policies and recent check-in.',
+        details: `Device: ${device.deviceName}\nCompliance: ${device.complianceState}\nOS: ${device.operatingSystem} ${device.osVersion}\nLast Sync: ${device.lastSyncDateTime}`
+    }));
+    return deviceFallback.length
+        ? deviceFallback
+        : [{
+                id: 'ocr-empty',
+                appName: 'No OCR telemetry yet',
+                targetName: '-',
+                normalizedCategory: 'DataUnavailable',
+                confidence: 0,
+                errorCode: '-',
+                errorDescription: 'No app installation status rows were returned from Graph.',
+                cause: 'Either there are currently no app status events, or delegated permissions are not sufficient.',
+                recommendedActions: 'Grant admin consent for required Graph delegated permissions and refresh again.',
+                details: 'OCR needs app status telemetry. Verify Microsoft Graph delegated permissions and Intune app status availability.'
+            }];
+}
+function buildPermissionCheck() {
+    return [{
+            id: 'permission-check',
+            connected: Boolean(config.mockMode || true),
+            mockMode: config.mockMode,
+            configuredScopes: (config.entra?.scopes ?? []).join(' '),
+            recommendedScopes: 'openid profile offline_access User.Read User.ReadBasic.All DeviceManagementManagedDevices.Read.All DeviceManagementApps.Read.All',
+            details: `Configured scopes:\n${(config.entra?.scopes ?? []).join(' ')}\n\n` +
+                `Recommended (Intune enrollment + app status):\n` +
+                `DeviceManagementManagedDevices.Read.All\nDeviceManagementApps.Read.All\nUser.ReadBasic.All\n\n` +
+                `Remember: delegated permissions require admin consent in Entra ID.`
+        }];
+}
+function buildEnrollmentErrorCatalog() {
+    return enrollmentErrorCatalog;
 }
 export const apiRouter = Router();
 apiRouter.use(ensureConnected);
+apiRouter.get('/debug/token', (req, res) => {
+    const token = req.session?.accessToken;
+    if (!token)
+        return res.status(401).json({ connected: false });
+    res.json({
+        connected: true,
+        user: req.session?.account ?? null,
+        tokenPreview: token.slice(0, 40) + '...',
+        scopes: (config.entra?.scopes ?? []).join(' ')
+    });
+});
+// בדיקת Graph בסיסית (GET) כדי להבין אם הטננט באמת "חי"
+apiRouter.get('/debug/graph', async (req, res) => {
+    const token = req.session?.accessToken;
+    if (!token)
+        return res.status(401).json({ message: 'Not connected' });
+    const p = typeof req.query.path === 'string' ? req.query.path : '/v1.0/organization';
+    try {
+        // פה אתה צריך להשתמש באותה פונקציה/Provider שיש לך ב-graph/provider.js
+        // לדוגמה: const data = await graphGet(p, token);
+        // אם אין לך graphGet – תגיד לי איך provider ממומש ואני אתאים שורה-בשורה.
+        const data = await getDataBundle(token); // זמני: רק כדי לראות שזה בכלל עובד
+        res.json({ ok: true, path: p, data });
+    }
+    catch (e) {
+        res.status(500).json({ ok: false, message: e?.message ?? 'Graph failed' });
+    }
+});
 apiRouter.get('/refresh', async (req, res) => {
     try {
-        const data = await getViewData(req.session.accessToken);
-        const dashboard = buildDashboard(data);
-        res.json({
-            message: 'Refresh completed.',
-            dashboard,
-            counts: {
-                windowsEnrollment: data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('windows')).length,
-                mobileEnrollment: data.devices.filter((d) => {
-                    const os = (d.operatingSystem ?? '').toLowerCase();
-                    return os.includes('ios') || os.includes('android') || os.includes('ipados');
-                }).length,
-                macEnrollment: data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('mac')).length,
-                incidents: data.incidents.length
-            }
-        });
+        await getViewData(req.session.accessToken);
+        res.json({ message: 'Refresh completed.' });
     }
     catch (error) {
         res.status(500).json({ message: error instanceof Error ? error.message : 'Refresh failed.' });
@@ -261,47 +208,43 @@ apiRouter.get('/refresh', async (req, res) => {
 });
 apiRouter.get('/view/:view', async (req, res) => {
     try {
-        const view = String(req.params.view).toLowerCase();
+        const view = String(req.params.view);
         const data = await getViewData(req.session.accessToken);
-        if (view === 'dashboard') {
+        if (view === 'dashboard')
             return res.json({ rows: [buildDashboard(data)], message: 'Dashboard loaded.' });
+        if (view === 'windowsAutopilot')
+            return res.json({ rows: buildAutopilotAllGrid(data), message: 'Device Preparation (All) loaded.' });
+        if (view === 'autopilotUserDriven')
+            return res.json({ rows: buildAutopilotUserDrivenGrid(data), message: 'Device Preparation - User-Driven loaded.' });
+        if (view === 'autopilotPreProvisioning')
+            return res.json({ rows: buildAutopilotPreProvisioningGrid(data), message: 'Device Preparation - Automatic loaded.' });
+        if (view === 'windowsEnrollment')
+            return res.json({ rows: buildWindowsEnrollmentGrid(data), message: 'Windows Enrollment loaded.' });
+        if (view === 'mobileEnrollment') {
+            const mobileRows = data.devices
+                .filter((d) => {
+                const os = (d.operatingSystem ?? '').toLowerCase();
+                return os.includes('ios') || os.includes('android') || os.includes('ipados');
+            })
+                .map((d) => ({
+                id: d.id,
+                deviceName: d.deviceName,
+                operatingSystem: d.operatingSystem,
+                osVersion: d.osVersion,
+                complianceState: d.complianceState,
+                lastSyncDateTime: d.lastSyncDateTime,
+                userDisplayName: d.userDisplayName,
+                userPrincipalName: d.userPrincipalName,
+                details: `Device: ${d.deviceName}\nOS: ${d.operatingSystem} ${d.osVersion}\nCompliance: ${d.complianceState}\nUPN: ${d.userPrincipalName || '-'}\nLast Sync: ${d.lastSyncDateTime}`
+            }));
+            return res.json({ rows: mobileRows, message: 'Mobile Enrollment loaded.' });
         }
-        if (view === 'windowsautopilot') {
-            const rows = buildAutopilotAllGrid(data);
-            return res.json({ rows, message: rows.length ? 'Device Preparation (All) loaded.' : 'No enrollment devices returned by endpoint.' });
-        }
-        if (view === 'autopilotuserdriven') {
-            const rows = buildAutopilotUserDrivenGrid(data);
-            return res.json({ rows, message: rows.length ? 'Device Preparation - User-Driven loaded.' : 'No user-driven enrollment rows available.' });
-        }
-        if (view === 'autopilotpreprovisioning') {
-            const rows = buildAutopilotPreProvisioningGrid(data);
-            return res.json({ rows, message: rows.length ? 'Device Preparation - Automatic loaded.' : 'No automatic/pre-provisioning rows available.' });
-        }
-        if (view === 'windowsenrollment') {
-            const rows = buildDevicesGrid(data);
-            return res.json({ rows, message: rows.length ? 'Windows Enrollment loaded.' : 'No managed devices returned by endpoint.' });
-        }
-        if (view === 'mobileenrollment') {
-            const rows = buildStaticComingSoonGrid('Mobile Enrollment');
-            return res.json({ rows, message: 'Mobile Enrollment loaded (scaffolded).' });
-        }
-        if (view === 'macenrollment') {
-            const rows = buildStaticComingSoonGrid('macOS Enrollment');
-            return res.json({ rows, message: 'macOS Enrollment loaded (scaffolded).' });
-        }
-        if (view === 'ocr') {
-            const rows = buildOcrGrid(data);
-            const message = data.statuses.length
-                ? 'OCR analysis loaded.'
-                : (data.devices.length
-                    ? 'OCR loaded from device compliance baseline because app install status telemetry is empty.'
-                    : 'OCR loaded with diagnostics only. No app status telemetry returned; check Graph delegated permissions and Intune app status availability.');
-            return res.json({ rows, message });
-        }
-        if (view === 'incidents') {
+        if (view === 'macEnrollment')
+            return res.json({ rows: [{ id: 'mac-coming-soon', status: 'Coming soon', details: 'macOS enrollment view is scaffolded.' }], message: 'macOS Enrollment loaded (scaffolded).' });
+        if (view === 'ocr')
+            return res.json({ rows: buildOcrGrid(data), message: 'OCR loaded.' });
+        if (view === 'incidents')
             return res.json({ rows: data.incidents, message: data.incidents[0]?.isPlaceholder ? 'No active incidents in current window.' : 'Incidents loaded.' });
-        }
         if (view === 'settings') {
             const settings = {
                 incidentWindowMinutes: config.incidentWindowMinutes,
@@ -312,134 +255,30 @@ apiRouter.get('/view/:view', async (req, res) => {
             };
             return res.json({ rows: [settings], message: 'Settings loaded.' });
         }
-        return res.status(400).json({ message: `Unsupported view: ${view}` });
+        // Extended views used by the UI
+        if (String(req.params.view) === 'permissionCheck')
+            return res.json({ rows: buildPermissionCheck(), message: 'Permission check loaded.' });
+        if (String(req.params.view) === 'enrollmentErrorCatalog')
+            return res.json({ rows: buildEnrollmentErrorCatalog(), message: 'Enrollment Error Catalog loaded.' });
+        return res.status(400).json({ message: `Unsupported view: ${req.params.view}` });
     }
     catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to load view.';
-        let friendly = message;
-        if (message.includes('403')) {
-            friendly = 'Endpoint access denied (403). Check Graph delegated permissions/admin consent.';
-        }
-        else if (message.includes('Request not applicable to target tenant')) {
-            friendly = 'This view requires an Intune-enabled tenant. Please sign in with a supported account.';
-        }
-        return res.status(500).json({ message: friendly });
-    }
-});
-apiRouter.get('/app-statuses', async (req, res) => {
-    try {
-        const data = await getViewData(req.session.accessToken);
-        res.json({ rows: buildStatusesGrid(data), message: 'App statuses loaded.' });
-    }
-    catch (error) {
-        res.status(500).json({ message: error instanceof Error ? error.message : 'Failed to load app statuses.' });
-    }
-});
-apiRouter.get('/incidents/recent', async (_req, res) => {
-    try {
-        const rows = await incidentRepo.listRecent(50);
-        res.json({ rows, message: 'Recent incidents loaded.' });
-    }
-    catch {
-        res.json({ rows: [], message: 'Recent incidents unavailable.' });
+        const msg = error instanceof Error ? error.message : 'Failed to load view.';
+        return res.status(500).json({ message: msg });
     }
 });
 apiRouter.post('/runbook', async (req, res) => {
     const row = req.body;
-    const actions = Array.isArray(row?.recommendedActions) ? row?.recommendedActions : [];
+    const actions = Array.isArray(row?.recommendedActions) ? row.recommendedActions : [];
     if ((row?.installState ?? '').toLowerCase().includes('fail') && actions.length > 0) {
-        const runbook = actions.map((action, index) => `${index + 1}. ${action}`).join('\n');
+        const runbook = actions.map((a, i) => `${i + 1}. ${a}`).join('\n');
         return res.json({ runbook });
     }
-    return res.json({ runbook: '1. Validate user licensing and MDM scope.\n2. Re-check network/proxy/TLS path.\n3. Inspect Intune + Entra logs around the timestamp.' });
-});
-apiRouter.post('/ocr/explain', async (req, res) => {
-    try {
-        const input = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
-        if (!input) {
-            return res.status(400).json({ message: 'Provide OCR/manual text before analysis.' });
-        }
-        const syntheticRow = {
-            id: 'manual-ocr-input',
-            appId: 'manual',
-            appName: 'Manual OCR Input',
-            targetType: 'device',
-            targetId: 'manual',
-            targetName: 'Manual',
-            installState: 'failed',
-            errorCode: input,
-            errorDescription: input,
-            lastReportedDateTime: new Date().toISOString(),
-            normalizedCategory: 'Unknown',
-            cause: 'Unknown',
-            confidence: 0,
-            recommendedActions: []
-        };
-        const explanation = await normalizeStatus(syntheticRow);
-        return res.json({
-            category: explanation.normalizedCategory,
-            confidence: explanation.confidence,
-            cause: explanation.cause,
-            recommendedActions: explanation.recommendedActions,
-            evidence: explanation.evidence
-        });
-    }
-    catch (error) {
-        return res.status(500).json({ message: error instanceof Error ? error.message : 'OCR explanation failed.' });
-    }
-});
-apiRouter.get('/export', async (req, res) => {
-    try {
-        const view = String(req.query.view ?? 'dashboard').toLowerCase();
-        const format = String(req.query.format ?? 'json').toLowerCase();
-        const data = await getViewData(req.session.accessToken);
-        let rows = [];
-        switch (view) {
-            case 'windowsautopilot':
-                rows = buildAutopilotAllGrid(data);
-                break;
-            case 'autopilotuserdriven':
-                rows = buildAutopilotUserDrivenGrid(data);
-                break;
-            case 'autopilotpreprovisioning':
-                rows = buildAutopilotPreProvisioningGrid(data);
-                break;
-            case 'windowsenrollment':
-                rows = buildDevicesGrid(data);
-                break;
-            case 'mobileenrollment':
-                rows = buildStaticComingSoonGrid('Mobile Enrollment');
-                break;
-            case 'macenrollment':
-                rows = buildStaticComingSoonGrid('macOS Enrollment');
-                break;
-            case 'ocr':
-                rows = buildOcrGrid(data);
-                break;
-            case 'incidents':
-                rows = data.incidents;
-                break;
-            case 'settings':
-                rows = [{ ...config.severityThresholds, mockMode: config.mockMode }];
-                break;
-            case 'dashboard':
-            default:
-                rows = [buildDashboard(data)];
-                break;
-        }
-        if (format === 'csv') {
-            const csv = toCsv(rows);
-            res.setHeader('Content-Type', 'text/csv');
-            res.setHeader('Content-Disposition', `attachment; filename=${view}.csv`);
-            return res.send(csv);
-        }
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Content-Disposition', `attachment; filename=${view}.json`);
-        return res.send(JSON.stringify(rows, null, 2));
-    }
-    catch (error) {
-        return res.status(500).json({ message: error instanceof Error ? error.message : 'Export failed.' });
-    }
+    return res.json({
+        runbook: '1. Validate user licensing and MDM scope.\n' +
+            '2. Re-check network/proxy/TLS path.\n' +
+            '3. Inspect Intune + Entra logs around the timestamp.'
+    });
 });
 apiRouter.get('/logs', async (_req, res) => {
     try {
@@ -462,4 +301,5 @@ apiRouter.get('/logs/download', async (_req, res) => {
         res.status(404).send('No logs available.');
     }
 });
+export default apiRouter;
 //# sourceMappingURL=api.js.map

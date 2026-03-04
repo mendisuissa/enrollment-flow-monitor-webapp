@@ -27,7 +27,10 @@ function mapDevice(item) {
         complianceState: asString(item.complianceState, 'unknown'),
         lastSyncDateTime: safeDate(item.lastSyncDateTime),
         userDisplayName: asString(item.userDisplayName),
-        userPrincipalName: asString(item.userPrincipalName)
+        userPrincipalName: asString(item.userPrincipalName),
+        serialNumber: asString(item.serialNumber, ''),
+        joinType: asString(item.joinType, ''),
+        deviceEnrollmentType: asString(item.deviceEnrollmentType, '')
     };
 }
 function mapUser(item) {
@@ -59,64 +62,68 @@ function mapStatus(item, app, targetType) {
         recommendedActions: []
     };
 }
-async function getGraphApps(accessToken) {
+function isExpectedGraphTenantError(err) {
+    const msg = String(err?.message ?? '');
+    return (msg.includes('Request not applicable to target tenant') || // Intune not enabled / not applicable
+        msg.includes('BadRequest') ||
+        msg.includes('Forbidden') ||
+        msg.includes('Application is not authorized') ||
+        msg.includes('Resource not found for the segment') // deviceStatuses/userStatuses not supported for this app type
+    );
+}
+async function safeGraphList(accessToken, url) {
     try {
-        const v1 = await graphList(accessToken, '/v1.0/deviceAppManagement/mobileApps?$select=id,displayName,publisher,lastModifiedDateTime');
-        if (v1.length > 0) {
-            return v1.map(mapApp);
-        }
-        const beta = await graphList(accessToken, '/beta/deviceAppManagement/mobileApps?$select=id,displayName,publisher,lastModifiedDateTime');
-        return beta.map(mapApp);
+        return await graphList(accessToken, url);
     }
-    catch (error) {
-        // Detect unsupported tenant error
-        if (error?.message?.includes('Request not applicable to target tenant')) {
-            // Return empty array, caller will handle
+    catch (err) {
+        // IMPORTANT: do not crash the whole dashboard on expected tenant/scope/endpoint limitations
+        if (isExpectedGraphTenantError(err))
             return [];
-        }
-        throw error;
+        throw err;
     }
+}
+async function getGraphApps(accessToken) {
+    // If the tenant/user doesn't have DeviceManagementApps scopes/admin consent -> return [] (do not crash)
+    const v1 = await safeGraphList(accessToken, '/v1.0/deviceAppManagement/mobileApps?$select=id,displayName,publisher,lastModifiedDateTime');
+    if (v1.length > 0)
+        return v1.map(mapApp);
+    const beta = await safeGraphList(accessToken, '/beta/deviceAppManagement/mobileApps?$select=id,displayName,publisher,lastModifiedDateTime');
+    return beta.map(mapApp);
 }
 async function getGraphAppStatuses(accessToken, apps) {
     const rows = [];
     for (const app of apps) {
-        try {
-            const deviceStatuses = await graphList(accessToken, `/v1.0/deviceAppManagement/mobileApps/${app.id}/deviceStatuses`);
-            rows.push(...deviceStatuses.map((x) => mapStatus(x, app, 'device')));
-        }
-        catch (error) {
-            if (error?.message?.includes('Request not applicable to target tenant')) {
-                // Skip unsupported tenant error
-                continue;
-            }
-            throw error;
-        }
-        try {
-            const userStatuses = await graphList(accessToken, `/v1.0/deviceAppManagement/mobileApps/${app.id}/userStatuses`);
-            rows.push(...userStatuses.map((x) => mapStatus(x, app, 'user')));
-        }
-        catch (error) {
-            if (error?.message?.includes('Request not applicable to target tenant')) {
-                continue;
-            }
-            throw error;
-        }
+        // deviceStatuses (try v1 then beta; if unsupported -> [])
+        const deviceStatusesV1 = await safeGraphList(accessToken, `/v1.0/deviceAppManagement/mobileApps/${app.id}/deviceStatuses`);
+        const deviceStatuses = deviceStatusesV1.length
+            ? deviceStatusesV1
+            : await safeGraphList(accessToken, `/beta/deviceAppManagement/mobileApps/${app.id}/deviceStatuses`);
+        rows.push(...deviceStatuses.map((x) => mapStatus(x, app, 'device')));
+        // userStatuses (try v1 then beta; if unsupported -> [])
+        const userStatusesV1 = await safeGraphList(accessToken, `/v1.0/deviceAppManagement/mobileApps/${app.id}/userStatuses`);
+        const userStatuses = userStatusesV1.length
+            ? userStatusesV1
+            : await safeGraphList(accessToken, `/beta/deviceAppManagement/mobileApps/${app.id}/userStatuses`);
+        rows.push(...userStatuses.map((x) => mapStatus(x, app, 'user')));
     }
     return rows;
 }
 async function getGraphUsers(accessToken) {
+    const users = await safeGraphList(accessToken, '/v1.0/users?$select=id,displayName,userPrincipalName,mail');
+    if (users.length > 0)
+        return users.map(mapUser);
+    // fallback to /me (this usually works even in limited tenants)
     try {
-        const users = await graphList(accessToken, '/v1.0/users?$select=id,displayName,userPrincipalName,mail');
-        if (users.length > 0)
-            return users.map(mapUser);
+        const me = await graphRequest(accessToken, '/v1.0/me?$select=id,displayName,userPrincipalName,mail');
+        return me?.id ? [mapUser(me)] : [];
     }
     catch {
+        return [];
     }
-    const me = await graphRequest(accessToken, '/v1.0/me?$select=id,displayName,userPrincipalName,mail');
-    return me?.id ? [mapUser(me)] : [];
 }
 async function getGraphDevices(accessToken) {
-    const devices = await graphList(accessToken, '/v1.0/deviceManagement/managedDevices?$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userDisplayName,userPrincipalName');
+    // If Intune isn't enabled / user lacks MDM scopes -> return [] (do not crash)
+    const devices = await safeGraphList(accessToken, '/v1.0/deviceManagement/managedDevices?$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userDisplayName,userPrincipalName,serialNumber,joinType,deviceEnrollmentType');
     return devices.map(mapDevice);
 }
 export async function getDataBundle(accessToken) {
