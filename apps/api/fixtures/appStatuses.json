@@ -1,0 +1,26 @@
+[
+  {
+    "id": "st-1",
+    "appId": "app-1",
+    "appName": "Company Portal",
+    "targetType": "device",
+    "targetId": "dev-2",
+    "targetName": "LAPTOP-200",
+    "installState": "failed",
+    "errorCode": "80070002",
+    "errorDescription": "The system cannot find the file specified.",
+    "lastReportedDateTime": "2026-03-02T09:00:00Z"
+  },
+  {
+    "id": "st-2",
+    "appId": "app-2",
+    "appName": "VPN Client",
+    "targetType": "user",
+    "targetId": "user-1",
+    "targetName": "Alex Doe",
+    "installState": "installed",
+    "errorCode": "",
+    "errorDescription": "",
+    "lastReportedDateTime": "2026-03-02T09:10:00Z"
+  }
+]

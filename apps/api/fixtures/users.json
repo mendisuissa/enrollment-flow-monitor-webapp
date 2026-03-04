@@ -1,0 +1,4 @@
+[
+  { "id": "user-1", "displayName": "Alex Doe", "userPrincipalName": "alex@contoso.com", "mail": "alex@contoso.com" },
+  { "id": "user-2", "displayName": "Nina Doe", "userPrincipalName": "nina@contoso.com", "mail": "nina@contoso.com" }
+]

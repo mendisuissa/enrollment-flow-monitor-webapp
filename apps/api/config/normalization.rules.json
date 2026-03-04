@@ -1,0 +1,53 @@
+{
+  "rules": [
+    {
+      "id": "mdm-80070002",
+      "enabled": true,
+      "failureCategory": "MDMEnrollment",
+      "confidence": 0.92,
+      "cause": "Device management enrollment bootstrap failed with missing local component/state (0x80070002).",
+      "anyMatches": ["80070002", "device management could not be enabled", "the system cannot find the file specified"],
+      "recommendedActions": [
+        "Run dsregcmd /status and verify AzureAdJoined=YES.",
+        "Verify Intune license + MDM user scope for the user.",
+        "Clear stale EnterpriseMgmt enrollment state and retry."
+      ]
+    },
+    {
+      "id": "network-connectivity",
+      "enabled": true,
+      "failureCategory": "NetworkConnectivity",
+      "confidence": 0.88,
+      "cause": "Connectivity, DNS, or proxy path blocked communication to Microsoft endpoints.",
+      "anyMatches": ["80072ee7", "80072efd", "name could not be resolved", "timeout", "proxy", "tls"],
+      "recommendedActions": [
+        "Validate DNS and outbound access to required Microsoft endpoints.",
+        "Test from a known-good network without SSL interception."
+      ]
+    },
+    {
+      "id": "already-managed",
+      "enabled": true,
+      "failureCategory": "AlreadyManagedOrRegistered",
+      "confidence": 0.9,
+      "cause": "Device is already enrolled/registered or has stale registration state.",
+      "anyMatches": ["80180014", "already enrolled", "already registered", "already being managed"],
+      "recommendedActions": [
+        "Remove stale work/school account registration.",
+        "Clean duplicate device objects and retry."
+      ]
+    },
+    {
+      "id": "generic-mdm",
+      "enabled": true,
+      "failureCategory": "MDMEnrollment",
+      "confidence": 0.65,
+      "cause": "Generic MDM enrollment failure from detected enrollment signals.",
+      "anyMatches": ["mdm", "enroll", "registration", "management"],
+      "recommendedActions": [
+        "Review Intune enrollment restrictions and user scope.",
+        "Check Entra sign-in logs around the failure timestamp."
+      ]
+    }
+  ]
+}
