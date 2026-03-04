@@ -144,3 +144,10 @@ export function getSeverity(count: number, thresholds: SeverityThresholds): Inci
   if (count >= thresholds.Medium) return 'Medium';
   return 'Low';
 }
+export interface SettingsData {
+  incidentWindowMinutes: number;
+  incidentThresholdCount: number;
+  severityThresholds: SeverityThresholds;
+  refreshIntervalSeconds: number;
+  mockMode: boolean;
+}
