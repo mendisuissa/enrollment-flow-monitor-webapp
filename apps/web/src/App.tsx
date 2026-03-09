@@ -373,13 +373,12 @@ export default function App() {
     });
   }
 
-  // Detect mobile - reactive
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+  // Detect mobile — reactive to window resize
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 1024px)').matches
   );
-
   useEffect(() => {
-    const mq = window.matchMedia('(max-width: 768px)');
+    const mq = window.matchMedia('(max-width: 1024px)');
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
@@ -387,85 +386,89 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {/* Mobile hamburger */}
+      {isMobile && (
+        <div className="surface topbar flex items-center justify-between">
+          <div className="text-xl font-semibold">Enrollment Flow Monitor Web App</div>
+          <button className="px-3 py-2 rounded bg-slate-900 text-white" onClick={() => setSidebarOpen(true)}>
+            &#9776;
+          </button>
+        </div>
+      )}
       <div className="surface topbar">
-        <div className="topbar-left">
-          <div className="logo-pill">
-            <img src="/logo.png" alt="Modern Endpoint logo" className="logo-img" />
-            <div className="logo-text">
-              <div className="logo-title">Modern Endpoint</div>
-              <div className="logo-sub">Enterprise Architecture Journal</div>
+        <div className="flex items-center gap-3">
+          <img src="/logo.png" alt="Modern Endpoint logo" className="h-10 w-auto rounded" />
+          <div>
+            <div className="text-2xl font-semibold tracking-tight">Enrollment Flow Monitor Web App</div>
+            <div className="topbar-subtitle">
+              {auth.connected ? `Signed in: ${auth.upn} | Tenant: ${auth.tenantId || 'Unknown'}` : 'Not connected'}
             </div>
           </div>
-          {!isMobile && (
-            <div className="topbar-titles">
-              <div className="topbar-title">Enrollment Flow Monitor Web App</div>
-              <div className="topbar-subtitle">
-                {auth.connected ? `Signed in: ${auth.upn}` : 'Not connected'}
-              </div>
-            </div>
-          )}
         </div>
-        <div className="topbar-actions">
-          {isMobile ? (
-            <button className="btn btn-hamburger" onClick={() => setSidebarOpen(true)}>☰</button>
+        <div className="flex gap-2">
+          <button className="btn btn-secondary" onClick={onCycleTheme}>
+            Theme: {themePreference === 'system' ? `System (${effectiveTheme})` : themePreference}
+          </button>
+          {!auth.connected ? (
+            <button className="btn btn-primary" onClick={() => { window.location.href = '/api/auth/login'; }}>Sign in</button>
           ) : (
             <>
-              <button className="btn btn-secondary" onClick={onCycleTheme}>
-                Theme: {themePreference === 'system' ? `System (${effectiveTheme})` : themePreference}
+              <button className="btn btn-primary" onClick={onRefresh} disabled={isRefreshing}>
+                {isRefreshing ? 'Refreshing...' : 'Refresh'}
               </button>
-              {!auth.connected ? (
-                <button className="btn btn-primary" onClick={() => { window.location.href = '/api/auth/login'; }}>Sign in</button>
-              ) : (
-                <>
-                  <button className="btn btn-primary" onClick={onRefresh} disabled={isRefreshing}>
-                    {isRefreshing ? 'Refreshing...' : 'Refresh'}
-                  </button>
-                  <div className="user-menu">
-                    <button className="btn btn-secondary" onClick={() => setIsUserMenuOpen((current) => !current)}>
-                      {auth.displayName || auth.upn || 'Account'}
-                    </button>
-                    {isUserMenuOpen && (
-                      <div className="user-menu-pop">
-                        <div className="menu-user">{auth.upn || 'Connected user'}</div>
-                        <button className="btn btn-danger" onClick={onDisconnect}>Disconnect</button>
-                      </div>
-                    )}
+              <div className="user-menu">
+                <button className="btn btn-secondary" onClick={() => setIsUserMenuOpen((current) => !current)}>
+                  {auth.displayName || auth.upn || 'Account'}
+                </button>
+                {isUserMenuOpen && (
+                  <div className="user-menu-pop">
+                    <div className="menu-user">{auth.upn || 'Connected user'}</div>
+                    <button className="btn btn-danger" onClick={onDisconnect}>Disconnect</button>
                   </div>
-                </>
-              )}
+                )}
+              </div>
             </>
           )}
         </div>
       </div>
-      {isMobile && (
-        <div className="mobile-action-bar surface">
-          <div className="topbar-subtitle">
-            {auth.connected ? `Signed in: ${auth.upn}` : 'Not connected'}
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="btn btn-secondary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={onCycleTheme}>Theme</button>
-            {!auth.connected ? (
-              <button className="btn btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={() => { window.location.href = '/api/auth/login'; }}>Sign in</button>
-            ) : (
-              <button className="btn btn-primary" style={{ fontSize: '12px', padding: '6px 10px' }} onClick={onRefresh} disabled={isRefreshing}>
-                {isRefreshing ? '...' : 'Refresh'}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
 
-      {/* Mobile sidebar drawer - outside content-grid, same as Intune pattern */}
-      {isMobile && sidebarOpen && (
-        <div className="sidebar-drawer-overlay" onClick={() => setSidebarOpen(false)}>
-          <div className="sidebar-drawer" onClick={e => e.stopPropagation()}>
-            <button className="drawer-close-btn" onClick={() => setSidebarOpen(false)}>✕</button>
+      <div className={isMobile ? "flex flex-col gap-3" : "content-grid"}>
+        {/* Sidebar: Drawer for mobile, panel for desktop */}
+        {isMobile ? (
+          sidebarOpen && (
+            <div ref={sidebarRef} className="fixed inset-0 bg-black bg-opacity-40 z-50 flex" onClick={() => setSidebarOpen(false)}>
+              <div className="panel w-64 h-full overflow-auto" onClick={e => e.stopPropagation()}>
+                <div className="nav-list">
+                  {views.map((view) => (
+                    <button
+                      key={view.id}
+                      className={`nav-btn ${currentView === view.id ? 'active' : ''}`}
+                      onClick={() => { setCurrentView(view.id); setSidebarOpen(false); }}
+                    >
+                      <span className={`nav-icon ${view.id === 'windowsEnrollment' ? 'nav-icon-device' : ''}`}>{view.icon}</span>
+                      <span className="nav-label">{view.label}</span>
+                      {badgeCounts[view.id] ? (
+                        <span className="badge" title="Count">{badgeCounts[view.id]}</span>
+                      ) : null}
+                    </button>
+                  ))}
+                  <div className="section-divider" />
+                  <button className="btn btn-secondary text-left" onClick={() => { onExport('csv'); setSidebarOpen(false); }} disabled={!auth.connected}>Export CSV</button>
+                  <button className="btn btn-secondary text-left" onClick={() => { onExport('json'); setSidebarOpen(false); }} disabled={!auth.connected}>Export JSON</button>
+                  <button className="btn btn-secondary text-left" onClick={() => { onCopyRunbook(); setSidebarOpen(false); }} disabled={!auth.connected}>Copy Runbook</button>
+                  <button className="btn btn-secondary text-left" onClick={() => { onOpenLogs(); setSidebarOpen(false); }} disabled={!auth.connected}>Open Logs</button>
+                </div>
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="panel">
             <div className="nav-list">
               {views.map((view) => (
                 <button
                   key={view.id}
                   className={`nav-btn ${currentView === view.id ? 'active' : ''}`}
-                  onClick={() => { setCurrentView(view.id); setSidebarOpen(false); }}
+                  onClick={() => setCurrentView(view.id as ExtendedViewName)}
                 >
                   <span className={`nav-icon ${view.id === 'windowsEnrollment' ? 'nav-icon-device' : ''}`}>{view.icon}</span>
                   <span className="nav-label">{view.label}</span>
@@ -475,39 +478,13 @@ export default function App() {
                 </button>
               ))}
               <div className="section-divider" />
-              <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 8, textAlign: 'left' }} onClick={() => { onExport('csv'); setSidebarOpen(false); }} disabled={!auth.connected}>Export CSV</button>
-              <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 8, textAlign: 'left' }} onClick={() => { onExport('json'); setSidebarOpen(false); }} disabled={!auth.connected}>Export JSON</button>
-              <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 8, textAlign: 'left' }} onClick={() => { onCopyRunbook(); setSidebarOpen(false); }} disabled={!auth.connected}>Copy Runbook</button>
-              <button className="btn btn-secondary" style={{ width: '100%', textAlign: 'left' }} onClick={() => { onOpenLogs(); setSidebarOpen(false); }} disabled={!auth.connected}>Open Logs</button>
+              <button className="btn btn-secondary text-left" onClick={() => onExport('csv')} disabled={!auth.connected}>Export CSV</button>
+              <button className="btn btn-secondary text-left" onClick={() => onExport('json')} disabled={!auth.connected}>Export JSON</button>
+              <button className="btn btn-secondary text-left" onClick={onCopyRunbook} disabled={!auth.connected}>Copy Runbook</button>
+              <button className="btn btn-secondary text-left" onClick={onOpenLogs} disabled={!auth.connected}>Open Logs</button>
             </div>
           </div>
-        </div>
-      )}
-
-      <div className="content-grid">
-        {/* Sidebar - always in DOM, hidden on mobile via CSS */}
-        <div className="panel sidebar">
-          <div className="nav-list">
-            {views.map((view) => (
-              <button
-                key={view.id}
-                className={`nav-btn ${currentView === view.id ? 'active' : ''}`}
-                onClick={() => setCurrentView(view.id as ExtendedViewName)}
-              >
-                <span className={`nav-icon ${view.id === 'windowsEnrollment' ? 'nav-icon-device' : ''}`}>{view.icon}</span>
-                <span className="nav-label">{view.label}</span>
-                {badgeCounts[view.id] ? (
-                  <span className="badge" title="Count">{badgeCounts[view.id]}</span>
-                ) : null}
-              </button>
-            ))}
-            <div className="section-divider" />
-            <button className="btn btn-secondary text-left" onClick={() => onExport('csv')} disabled={!auth.connected}>Export CSV</button>
-            <button className="btn btn-secondary text-left" onClick={() => onExport('json')} disabled={!auth.connected}>Export JSON</button>
-            <button className="btn btn-secondary text-left" onClick={onCopyRunbook} disabled={!auth.connected}>Copy Runbook</button>
-            <button className="btn btn-secondary text-left" onClick={onOpenLogs} disabled={!auth.connected}>Open Logs</button>
-          </div>
-        </div>
+        )}
 
         <div className="panel">
           {!auth.connected ? (
