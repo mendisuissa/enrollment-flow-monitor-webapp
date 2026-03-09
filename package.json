@@ -1,0 +1,21 @@
+{
+  "name": "enrollment-flow-monitor-webapp",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/shared"
+  ],
+  "scripts": {
+    "start": "node out/apps/api/server.js",
+    "dev": "concurrently \"npm run dev -w @efm/api\" \"npm run dev -w @efm/web\"",
+    "build": "npm run build -w @efm/shared && npm run build -w @efm/api",
+    "lint": "npm run lint -ws",
+    "prisma:generate": "npm run prisma:generate -w @efm/api",
+    "prisma:migrate": "npm run prisma:migrate -w @efm/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
