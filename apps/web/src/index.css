@@ -634,3 +634,42 @@ body {
     flex: 1;
   }
 }
+
+/* Sidebar drawer (mobile) */
+.sidebar-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 100;
+  display: flex;
+}
+
+.sidebar-drawer {
+  width: 260px;
+  max-width: 80vw;
+  height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overflow-y: auto;
+  box-shadow: 4px 0 24px rgba(0,0,0,0.15);
+  padding: 12px;
+}
+
+.drawer-close-btn {
+  width: 100%;
+  text-align: right;
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0 0 10px 0;
+  display: block;
+}
+
+/* Hide desktop sidebar on mobile, shown via drawer */
+@media (max-width: 768px) {
+  .panel.sidebar {
+    display: none;
+  }
+}

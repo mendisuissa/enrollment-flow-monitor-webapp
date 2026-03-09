@@ -455,43 +455,17 @@ export default function App() {
         </div>
       )}
 
-      <div className="content-grid">
-        {/* Sidebar: Drawer for mobile, panel for desktop */}
-        {isMobile ? (
-          sidebarOpen && (
-            <div ref={sidebarRef} className="fixed inset-0 bg-black bg-opacity-40 z-50 flex" onClick={() => setSidebarOpen(false)}>
-              <div className="panel w-64 h-full overflow-auto" onClick={e => e.stopPropagation()}>
-                <div className="nav-list">
-                  {views.map((view) => (
-                    <button
-                      key={view.id}
-                      className={`nav-btn ${currentView === view.id ? 'active' : ''}`}
-                      onClick={() => { setCurrentView(view.id); setSidebarOpen(false); }}
-                    >
-                      <span className={`nav-icon ${view.id === 'windowsEnrollment' ? 'nav-icon-device' : ''}`}>{view.icon}</span>
-                      <span className="nav-label">{view.label}</span>
-                      {badgeCounts[view.id] ? (
-                        <span className="badge" title="Count">{badgeCounts[view.id]}</span>
-                      ) : null}
-                    </button>
-                  ))}
-                  <div className="section-divider" />
-                  <button className="btn btn-secondary text-left" onClick={() => { onExport('csv'); setSidebarOpen(false); }} disabled={!auth.connected}>Export CSV</button>
-                  <button className="btn btn-secondary text-left" onClick={() => { onExport('json'); setSidebarOpen(false); }} disabled={!auth.connected}>Export JSON</button>
-                  <button className="btn btn-secondary text-left" onClick={() => { onCopyRunbook(); setSidebarOpen(false); }} disabled={!auth.connected}>Copy Runbook</button>
-                  <button className="btn btn-secondary text-left" onClick={() => { onOpenLogs(); setSidebarOpen(false); }} disabled={!auth.connected}>Open Logs</button>
-                </div>
-              </div>
-            </div>
-          )
-        ) : (
-          <div className="panel">
+      {/* Mobile sidebar drawer - outside content-grid, same as Intune pattern */}
+      {isMobile && sidebarOpen && (
+        <div className="sidebar-drawer-overlay" onClick={() => setSidebarOpen(false)}>
+          <div className="sidebar-drawer" onClick={e => e.stopPropagation()}>
+            <button className="drawer-close-btn" onClick={() => setSidebarOpen(false)}>✕</button>
             <div className="nav-list">
               {views.map((view) => (
                 <button
                   key={view.id}
                   className={`nav-btn ${currentView === view.id ? 'active' : ''}`}
-                  onClick={() => setCurrentView(view.id as ExtendedViewName)}
+                  onClick={() => { setCurrentView(view.id); setSidebarOpen(false); }}
                 >
                   <span className={`nav-icon ${view.id === 'windowsEnrollment' ? 'nav-icon-device' : ''}`}>{view.icon}</span>
                   <span className="nav-label">{view.label}</span>
@@ -501,13 +475,39 @@ export default function App() {
                 </button>
               ))}
               <div className="section-divider" />
-              <button className="btn btn-secondary text-left" onClick={() => onExport('csv')} disabled={!auth.connected}>Export CSV</button>
-              <button className="btn btn-secondary text-left" onClick={() => onExport('json')} disabled={!auth.connected}>Export JSON</button>
-              <button className="btn btn-secondary text-left" onClick={onCopyRunbook} disabled={!auth.connected}>Copy Runbook</button>
-              <button className="btn btn-secondary text-left" onClick={onOpenLogs} disabled={!auth.connected}>Open Logs</button>
+              <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 8, textAlign: 'left' }} onClick={() => { onExport('csv'); setSidebarOpen(false); }} disabled={!auth.connected}>Export CSV</button>
+              <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 8, textAlign: 'left' }} onClick={() => { onExport('json'); setSidebarOpen(false); }} disabled={!auth.connected}>Export JSON</button>
+              <button className="btn btn-secondary" style={{ width: '100%', marginBottom: 8, textAlign: 'left' }} onClick={() => { onCopyRunbook(); setSidebarOpen(false); }} disabled={!auth.connected}>Copy Runbook</button>
+              <button className="btn btn-secondary" style={{ width: '100%', textAlign: 'left' }} onClick={() => { onOpenLogs(); setSidebarOpen(false); }} disabled={!auth.connected}>Open Logs</button>
             </div>
           </div>
-        )}
+        </div>
+      )}
+
+      <div className="content-grid">
+        {/* Sidebar - always in DOM, hidden on mobile via CSS */}
+        <div className="panel sidebar">
+          <div className="nav-list">
+            {views.map((view) => (
+              <button
+                key={view.id}
+                className={`nav-btn ${currentView === view.id ? 'active' : ''}`}
+                onClick={() => setCurrentView(view.id as ExtendedViewName)}
+              >
+                <span className={`nav-icon ${view.id === 'windowsEnrollment' ? 'nav-icon-device' : ''}`}>{view.icon}</span>
+                <span className="nav-label">{view.label}</span>
+                {badgeCounts[view.id] ? (
+                  <span className="badge" title="Count">{badgeCounts[view.id]}</span>
+                ) : null}
+              </button>
+            ))}
+            <div className="section-divider" />
+            <button className="btn btn-secondary text-left" onClick={() => onExport('csv')} disabled={!auth.connected}>Export CSV</button>
+            <button className="btn btn-secondary text-left" onClick={() => onExport('json')} disabled={!auth.connected}>Export JSON</button>
+            <button className="btn btn-secondary text-left" onClick={onCopyRunbook} disabled={!auth.connected}>Copy Runbook</button>
+            <button className="btn btn-secondary text-left" onClick={onOpenLogs} disabled={!auth.connected}>Open Logs</button>
+          </div>
+        </div>
 
         <div className="panel">
           {!auth.connected ? (
