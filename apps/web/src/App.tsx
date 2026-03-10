@@ -843,6 +843,9 @@ export default function App() {
   const [checklistScenario, setChecklistScenario] = useState<'autopilot' | 'ade-ios' | 'ade-macos' | 'android-enterprise'>('autopilot');
   const [checklistItems, setChecklistItems] = useState<any[]>([]);
 
+  // Tutorial modal state
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+
   const filteredErrors = ERROR_CATALOG.filter(e => {
     const matchesSearch = !errorSearch ||
       e.title.toLowerCase().includes(errorSearch.toLowerCase()) ||
@@ -1000,9 +1003,88 @@ export default function App() {
 
         <div className="panel">
           {!auth.connected ? (
-            <div className="empty-state">
-              <div className="empty-state-title">Public preview enabled</div>
-              <div>Sign in to load live tenant data for this view.</div>
+            <div className="welcome-screen">
+              <div className="welcome-hero">
+                <div className="welcome-logo-mark">EF</div>
+                <h1 className="welcome-title">Enrollment Flow Monitor</h1>
+                <p className="welcome-tagline">
+                  The all-in-one Intune enrollment intelligence platform for IT Admins —
+                  diagnose failures, track compliance, and roll out with confidence.
+                </p>
+                <div className="welcome-actions">
+                  <button className="btn btn-primary welcome-signin-btn" onClick={() => { window.location.href = '/api/auth/login'; }}>
+                    🔑 Sign in with Microsoft
+                  </button>
+                  <button className="btn welcome-tutorial-btn" onClick={() => setTutorialOpen(true)}>
+                    ▶ Watch Tutorial
+                  </button>
+                </div>
+              </div>
+
+              <div className="welcome-features">
+                <div className="welcome-feature">
+                  <span className="wf-icon">📚</span>
+                  <div className="wf-text">
+                    <div className="wf-title">Error Catalog</div>
+                    <div className="wf-desc">53 known enrollment errors with remediation steps</div>
+                  </div>
+                </div>
+                <div className="welcome-feature">
+                  <span className="wf-icon">📈</span>
+                  <div className="wf-text">
+                    <div className="wf-title">Live Reports</div>
+                    <div className="wf-desc">Health scores, compliance rates & platform breakdown</div>
+                  </div>
+                </div>
+                <div className="welcome-feature">
+                  <span className="wf-icon">✅</span>
+                  <div className="wf-text">
+                    <div className="wf-title">Readiness Checklist</div>
+                    <div className="wf-desc">Pre-flight for Autopilot, ADE, Android Enterprise</div>
+                  </div>
+                </div>
+                <div className="welcome-feature">
+                  <span className="wf-icon">🤖</span>
+                  <div className="wf-text">
+                    <div className="wf-title">AI Assistant</div>
+                    <div className="wf-desc">M-Intune Architect AI — Enterprise Edition</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="welcome-footer">
+                All rights reserved to modernendpoint.tech · by Menahem Suissa
+              </div>
+
+              {/* Tutorial Modal */}
+              {tutorialOpen && (
+                <div className="tutorial-overlay" onClick={() => setTutorialOpen(false)}>
+                  <div className="tutorial-modal" onClick={e => e.stopPropagation()}>
+                    <div className="tutorial-modal-header">
+                      <div className="tutorial-modal-title">▶ Getting Started with Enrollment Flow Monitor</div>
+                      <button className="tutorial-close-btn" onClick={() => setTutorialOpen(false)}>✕</button>
+                    </div>
+                    <div className="tutorial-video-wrap">
+                      <iframe
+                        src="https://www.youtube.com/embed/n3MOS2xdMNw?rel=0&modestbranding=1"
+                        title="Enrollment Flow Monitor – Tutorial"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    </div>
+                    <div className="tutorial-chapters">
+                      <div className="tutorial-chapter-label">What's covered:</div>
+                      <div className="tutorial-chapter-list">
+                        <span className="tutorial-chapter">00:00 — Overview & Sign-in</span>
+                        <span className="tutorial-chapter">01:30 — Error Catalog</span>
+                        <span className="tutorial-chapter">03:00 — Reports & Health Score</span>
+                        <span className="tutorial-chapter">05:00 — Readiness Checklist</span>
+                        <span className="tutorial-chapter">07:00 — AI Assistant</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ) : currentView === 'ocr' ? (
             <div className="ocr-shell">
