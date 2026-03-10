@@ -10,7 +10,9 @@ export type ViewName =
   | 'incidents'
   | 'settings'
   | 'permissionCheck'
-  | 'enrollmentErrorCatalog';
+  | 'enrollmentErrorCatalog'
+  | 'reports'
+  | 'readinessChecklist';
 
 export interface AuthStatus {
   connected: boolean;
@@ -151,3 +153,70 @@ export interface SettingsData {
   refreshIntervalSeconds: number;
   mockMode: boolean;
 }
+
+// ── macOS Enrollment ──────────────────────────────────────────────────────────
+export interface MacDeviceRow {
+  id: string;
+  deviceName: string;
+  osVersion: string;
+  enrollmentType: string;   // 'ADE' | 'UserEnrollment' | 'Unknown'
+  supervised: boolean;
+  userApproved: boolean;
+  complianceState: string;
+  lastSyncDateTime: string;
+  userPrincipalName: string;
+  serialNumber: string;
+  details: string;
+}
+
+// ── Reports ───────────────────────────────────────────────────────────────────
+export interface PlatformBreakdown {
+  platform: string;
+  count: number;
+  compliant: number;
+  nonCompliant: number;
+}
+
+export interface TopErrorEntry {
+  errorCode: string;
+  title: string;
+  count: number;
+  severity: 'High' | 'Medium' | 'Low';
+}
+
+export interface HealthScore {
+  platform: string;
+  score: number;          // 0-100
+  trend: 'up' | 'down' | 'stable';
+  enrolled: number;
+  compliant: number;
+  total: number;
+}
+
+export interface ReportData {
+  generatedAt: string;
+  tenantId: string;
+  tenantUpn: string;
+  totalDevices: number;
+  overallComplianceRate: number;   // 0-100
+  activeIncidents: number;
+  platformBreakdown: PlatformBreakdown[];
+  topErrors: TopErrorEntry[];
+  healthScores: HealthScore[];
+  enrollmentTrend: Array<{ date: string; count: number }>;
+}
+
+// ── Readiness Checklist ───────────────────────────────────────────────────────
+export type ChecklistScenario = 'autopilot' | 'ade-ios' | 'ade-macos' | 'android-enterprise';
+export type ChecklistStatus = 'pass' | 'warn' | 'fail' | 'manual';
+
+export interface ChecklistItem {
+  id: string;
+  category: string;
+  label: string;
+  description: string;
+  status: ChecklistStatus;
+  detail: string;
+  docUrl: string;
+}
+

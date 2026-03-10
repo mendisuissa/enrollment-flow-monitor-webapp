@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { ViewName } from '@efm/shared';
-type ExtendedViewName = ViewName | 'permissionCheck' | 'enrollmentErrorCatalog';
+type ExtendedViewName = ViewName | 'permissionCheck' | 'enrollmentErrorCatalog' | 'reports' | 'readinessChecklist';
 import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
@@ -20,6 +20,8 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'incidents', label: 'Incidents', icon: '🚨' },
   { id: 'permissionCheck', label: 'Permission Check', icon: '🔑' },
   { id: 'enrollmentErrorCatalog', label: 'Enrollment Error Catalog', icon: '📚' },
+  { id: 'reports', label: 'Reports', icon: '📈' },
+  { id: 'readinessChecklist', label: 'Readiness Checklist', icon: '✅' },
   { id: 'settings', label: 'Settings', icon: '⚙️' }
 ];
 
@@ -183,6 +185,26 @@ export default function App() {
       setStatusMessage('Enrollment Error Catalog: Browse known errors and fixes.');
       setDetailsSummary('Enrollment Error Catalog');
       setDetailsText('Select an error card to see details and remediation steps.');
+      return;
+    }
+    if (currentView === 'reports') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Reports: Loading enrollment analytics...');
+      getView('reports' as any).then(result => {
+        const data = result.rows?.[0] as any;
+        setReportData(data ?? null);
+        setStatusMessage('Reports loaded.');
+      }).catch(() => setStatusMessage('Reports load failed.'));
+      return;
+    }
+    if (currentView === 'readinessChecklist') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Readiness Checklist loaded.');
+      getView('readinessChecklist' as any).then(result => {
+        setChecklistItems(result.rows ?? []);
+      }).catch(() => setChecklistItems([]));
       return;
     }
 
@@ -814,6 +836,13 @@ export default function App() {
   const [errorFilter, setErrorFilter] = useState<'all' | 'high' | 'medium' | 'low' | 'Windows' | 'iOS' | 'Android' | 'macOS'>('all');
   const [expandedError, setExpandedError] = useState<string | null>(null);
 
+  // Reports state
+  const [reportData, setReportData] = useState<any>(null);
+
+  // Readiness Checklist state
+  const [checklistScenario, setChecklistScenario] = useState<'autopilot' | 'ade-ios' | 'ade-macos' | 'android-enterprise'>('autopilot');
+  const [checklistItems, setChecklistItems] = useState<any[]>([]);
+
   const filteredErrors = ERROR_CATALOG.filter(e => {
     const matchesSearch = !errorSearch ||
       e.title.toLowerCase().includes(errorSearch.toLowerCase()) ||
@@ -1088,6 +1117,147 @@ export default function App() {
                   </div>
                 ))}
               </div>
+            </div>
+          ) : currentView === 'reports' ? (
+            <div className="reports-shell">
+              <div className="reports-header">
+                <div>
+                  <div className="reports-title">📈 Enrollment Reports</div>
+                  <div className="reports-subtitle">Live analytics — generated {reportData ? new Date(reportData.generatedAt).toLocaleString() : '...'}</div>
+                </div>
+                <button className="btn btn-primary" onClick={() => {
+                  const el = document.getElementById('reports-print-area');
+                  if (el) { window.print(); }
+                }}>⬇ Export PDF</button>
+              </div>
+              {!reportData ? (
+                <div className="empty-state"><div className="empty-state-title">Loading reports...</div></div>
+              ) : (
+                <div id="reports-print-area" className="reports-body">
+                  {/* KPI row */}
+                  <div className="kpi-row">
+                    <div className="kpi-card"><div className="kpi-value">{reportData.totalDevices}</div><div className="kpi-label">Total Devices</div></div>
+                    <div className="kpi-card"><div className="kpi-value green">{reportData.overallComplianceRate}%</div><div className="kpi-label">Compliance Rate</div></div>
+                    <div className="kpi-card"><div className={`kpi-value ${reportData.activeIncidents > 0 ? 'red' : 'green'}`}>{reportData.activeIncidents}</div><div className="kpi-label">Active Incidents</div></div>
+                    <div className="kpi-card"><div className="kpi-value amber">{reportData.platformBreakdown?.length ?? 0}</div><div className="kpi-label">Platforms</div></div>
+                  </div>
+
+                  {/* Health Scores */}
+                  <div className="reports-section-title">Platform Health Score</div>
+                  <div className="health-score-row">
+                    {(reportData.healthScores ?? []).map((h: any) => (
+                      <div key={h.platform} className="health-score-card">
+                        <div className="hs-platform">{h.platform}</div>
+                        <div className="hs-score-wrap">
+                          <div className="hs-ring" style={{ '--score': h.score } as any}>
+                            <span className="hs-number">{h.score}</span>
+                          </div>
+                        </div>
+                        <div className="hs-stats">
+                          <span className="hs-stat green">{h.compliant} compliant</span>
+                          <span className="hs-stat red">{h.enrolled - h.compliant} non-compliant</span>
+                          <span className="hs-stat muted">{h.enrolled} total</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Platform breakdown */}
+                  <div className="reports-section-title">Platform Breakdown</div>
+                  <div className="platform-bars">
+                    {(reportData.platformBreakdown ?? []).map((p: any) => (
+                      <div key={p.platform} className="platform-bar-row">
+                        <div className="pb-label">{p.platform}</div>
+                        <div className="pb-bar-wrap">
+                          <div className="pb-bar-compliant" style={{ width: `${p.count > 0 ? (p.compliant / p.count) * 100 : 0}%` }} />
+                          <div className="pb-bar-nc" style={{ width: `${p.count > 0 ? (p.nonCompliant / p.count) * 100 : 0}%` }} />
+                        </div>
+                        <div className="pb-counts">
+                          <span className="green">{p.compliant}✓</span>
+                          <span className="red">{p.nonCompliant}✗</span>
+                          <span className="muted">/ {p.count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Top Errors */}
+                  {(reportData.topErrors ?? []).length > 0 && (<>
+                    <div className="reports-section-title">Top Enrollment Errors</div>
+                    <div className="top-errors-list">
+                      {(reportData.topErrors ?? []).map((e: any, i: number) => (
+                        <div key={e.errorCode} className={`top-error-row sev-${(e.severity ?? 'low').toLowerCase()}`}>
+                          <span className="te-rank">#{i + 1}</span>
+                          <span className={`sev-badge sev-${(e.severity ?? 'low').toLowerCase()}`}>{e.severity}</span>
+                          <span className="te-code">{e.errorCode}</span>
+                          <span className="te-title">{e.title}</span>
+                          <span className="te-count">{e.count} devices</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>)}
+                </div>
+              )}
+            </div>
+          ) : currentView === 'readinessChecklist' ? (
+            <div className="checklist-shell">
+              <div className="checklist-header">
+                <div>
+                  <div className="checklist-title">✅ Enrollment Readiness Checklist</div>
+                  <div className="checklist-subtitle">Pre-flight verification before rolling out a new enrollment scenario</div>
+                </div>
+              </div>
+              <div className="checklist-scenarios">
+                {([
+                  { id: 'autopilot', label: '🖥️ Windows Autopilot' },
+                  { id: 'ade-ios', label: '📱 ADE – iOS/iPadOS' },
+                  { id: 'ade-macos', label: '🍎 ADE – macOS' },
+                  { id: 'android-enterprise', label: '🤖 Android Enterprise' },
+                ] as const).map(s => (
+                  <button
+                    key={s.id}
+                    className={`scenario-btn ${checklistScenario === s.id ? 'active' : ''}`}
+                    onClick={() => {
+                      setChecklistScenario(s.id);
+                      getView(`readinessChecklist?scenario=${s.id}` as any).then(r => setChecklistItems(r.rows ?? [])).catch(() => setChecklistItems([]));
+                    }}
+                  >{s.label}</button>
+                ))}
+              </div>
+              {checklistItems.length === 0 ? (
+                <div className="empty-state"><div className="empty-state-title">Loading checklist...</div></div>
+              ) : (
+                <div className="checklist-list">
+                  {(['Devices', 'Licensing', 'Registration', 'ABM', 'Profile', 'Policy', 'Certificates', 'Network', 'Apps', 'Google', 'Device', 'Security', 'Health'] as const).map(cat => {
+                    const items = checklistItems.filter((i: any) => i.category === cat);
+                    if (!items.length) return null;
+                    return (
+                      <div key={cat} className="checklist-category">
+                        <div className="checklist-cat-label">{cat}</div>
+                        {items.map((item: any) => (
+                          <div key={item.id} className={`checklist-item status-${item.status}`}>
+                            <span className="ci-icon">
+                              {item.status === 'pass' ? '✅' : item.status === 'warn' ? '⚠️' : item.status === 'fail' ? '❌' : '🔲'}
+                            </span>
+                            <div className="ci-content">
+                              <div className="ci-label">{item.label}</div>
+                              <div className="ci-desc">{item.description}</div>
+                              <div className="ci-detail">{item.detail}</div>
+                            </div>
+                            <a className="ci-doc" href={item.docUrl} target="_blank" rel="noopener noreferrer">Docs ↗</a>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                  <div className="checklist-legend">
+                    <span>✅ Auto-verified</span>
+                    <span>⚠️ Warning detected</span>
+                    <span>❌ Failed</span>
+                    <span>🔲 Manual check required</span>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             isViewLoading ? (
