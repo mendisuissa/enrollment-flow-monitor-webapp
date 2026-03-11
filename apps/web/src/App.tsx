@@ -1424,7 +1424,7 @@ export default function App() {
                             {toText(row['deviceName'] ?? row['displayName'] ?? row['name'] ?? row['title'] ?? `Row ${index + 1}`)}
                           </span>
                           <div className="mdc-actions">
-                            {row['id'] && (
+                            {Boolean(row['id']) && (
                               <button className="copy-id-btn" title="Copy ID" onClick={e => {
                                 e.stopPropagation();
                                 navigator.clipboard.writeText(String(row['id']));
