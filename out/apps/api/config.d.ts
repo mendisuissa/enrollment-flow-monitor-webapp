@@ -21,6 +21,7 @@ export declare const config: {
         clientSecret: string;
         redirectUri: string;
         scopes: string[];
+        scopesWrite: string[];
     };
 };
 export declare function authConfigured(): boolean;

@@ -498,23 +498,24 @@ apiRouter.post('/ocr/explain', async (req, res) => {
   // Look up error code in local catalog first (fast, no external call)
   const lowerText = text.toLowerCase();
   const catalogMatch = enrollmentErrorCatalog.find(entry => {
-    const code = entry.code.toLowerCase();
-    return lowerText.includes(code);
-  });
+  const code = entry.errorCode.toLowerCase();
+  return lowerText.includes(code);
+});
 
-  if (catalogMatch) {
-    const explanation = [
-      `**${catalogMatch.title}** (${catalogMatch.code})`,
-      '',
-      `**Description:** ${catalogMatch.description}`,
-      '',
-      `**Root Cause:** ${catalogMatch.cause}`,
-      '',
-      '**Recommended Actions:**',
-      ...catalogMatch.actions.map((a, i) => `${i + 1}. ${a}`)
-    ].join('\n');
-    return res.json({ explanation });
-  }
+if (catalogMatch) {
+  const explanation = [
+    `**${catalogMatch.title}** (${catalogMatch.errorCode})`,
+    '',
+    `**Description:** ${catalogMatch.symptoms}`,
+    '',
+    `**Root Cause:** ${catalogMatch.likelyRootCause}`,
+    '',
+    '**Recommended Actions:**',
+    catalogMatch.remediation
+  ].join('\n');
+
+  return res.json({ explanation });
+}
 
   // Fallback: extract error code pattern and give generic guidance
   const errorCodeMatch = text.match(/0x[0-9A-Fa-f]{6,8}|80\d{6}|0x8[0-9A-Fa-f]{7}/);

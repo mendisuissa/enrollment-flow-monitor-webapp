@@ -454,5 +454,153 @@ apiRouter.get('/logs/download', async (_req, res) => {
         res.status(404).send('No logs available.');
     }
 });
+// ── OCR / AI Explanation ──────────────────────────────────
+apiRouter.post('/ocr/explain', async (req, res) => {
+    const { text } = req.body;
+    if (!text?.trim()) {
+        return res.status(400).json({ explanation: 'No text provided. Paste an error message and try again.' });
+    }
+    // Look up error code in local catalog first (fast, no external call)
+    const lowerText = text.toLowerCase();
+    const catalogMatch = enrollmentErrorCatalog.find(entry => {
+        const code = entry.errorCode.toLowerCase();
+        return lowerText.includes(code);
+    });
+    if (catalogMatch) {
+        const explanation = [
+            `**${catalogMatch.title}** (${catalogMatch.errorCode})`,
+            '',
+            `**Description:** ${catalogMatch.symptoms}`,
+            '',
+            `**Root Cause:** ${catalogMatch.likelyRootCause}`,
+            '',
+            '**Recommended Actions:**',
+            catalogMatch.remediation
+        ].join('\n');
+        return res.json({ explanation });
+    }
+    // Fallback: extract error code pattern and give generic guidance
+    const errorCodeMatch = text.match(/0x[0-9A-Fa-f]{6,8}|80\d{6}|0x8[0-9A-Fa-f]{7}/);
+    const correlationMatch = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    const lines = [];
+    if (errorCodeMatch) {
+        lines.push(`**Error Code Detected:** \`${errorCodeMatch[0]}\``);
+        lines.push('');
+        lines.push('This error code was not found in the local catalog. General troubleshooting steps:');
+        lines.push('1. Search https://learn.microsoft.com/en-us/mem/intune for this error code.');
+        lines.push('2. Check Intune portal: Devices → Monitor → Enrollment failures.');
+        lines.push('3. Review Azure AD Sign-in logs for the user/device around the failure timestamp.');
+        lines.push('4. Verify device compliance and MDM enrollment scope in Entra ID.');
+    }
+    else {
+        lines.push('**Enrollment Error Analysis**');
+        lines.push('');
+        lines.push('No specific error code detected. Based on the message content:');
+        lines.push('1. Verify the device has a valid Intune license assigned to the user.');
+        lines.push('2. Confirm the device is in scope for MDM auto-enrollment.');
+        lines.push('3. Check proxy/firewall rules — ensure Intune endpoints are reachable.');
+        lines.push('4. Review: https://www.microsoft.com/wamerrors for Windows-specific codes.');
+    }
+    if (correlationMatch) {
+        lines.push('');
+        lines.push(`**Correlation ID:** \`${correlationMatch[0]}\``);
+        lines.push('→ Use this ID in Azure AD audit logs or Intune diagnostic reports for exact trace.');
+    }
+    return res.json({ explanation: lines.join('\n') });
+});
+// ── Device Remediation Actions ────────────────────────────
+// These routes MUST use the write token (from GRAPH_SCOPES_WRITE elevated login).
+// If writeAccessToken is missing, the user has not yet consented to write permissions.
+function getWriteToken(req) {
+    return req.session?.writeAccessToken ?? null;
+}
+function requireWriteToken(req, res) {
+    const token = getWriteToken(req);
+    if (!token) {
+        res.status(403).json({
+            success: false,
+            code: 'WRITE_PERMISSIONS_REQUIRED',
+            message: 'This action requires elevated permissions. Please authorize via the Upgrade Access flow.'
+        });
+        return null;
+    }
+    return token;
+}
+apiRouter.post('/devices/:id/sync', async (req, res) => {
+    try {
+        const token = requireWriteToken(req, res);
+        if (!token)
+            return;
+        const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/syncDevice`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
+        });
+        if (!graphRes.ok && graphRes.status !== 204) {
+            const body = await graphRes.text().catch(() => '');
+            res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
+            return;
+        }
+        res.json({ success: true, message: 'Sync command sent.' });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, message: e?.message ?? 'Sync failed.' });
+    }
+});
+apiRouter.post('/devices/:id/reboot', async (req, res) => {
+    try {
+        const token = requireWriteToken(req, res);
+        if (!token)
+            return;
+        const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/rebootNow`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
+        });
+        if (!graphRes.ok && graphRes.status !== 204) {
+            const body = await graphRes.text().catch(() => '');
+            res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
+            return;
+        }
+        res.json({ success: true, message: 'Reboot command sent.' });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, message: e?.message ?? 'Reboot failed.' });
+    }
+});
+apiRouter.post('/devices/:id/autopilotReset', async (req, res) => {
+    try {
+        const token = requireWriteToken(req, res);
+        if (!token)
+            return;
+        const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/windowsAutopilotReset`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
+        });
+        if (!graphRes.ok && graphRes.status !== 204) {
+            const body = await graphRes.text().catch(() => '');
+            res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
+            return;
+        }
+        res.json({ success: true, message: 'Autopilot Reset command sent.' });
+    }
+    catch (e) {
+        res.status(500).json({ success: false, message: e?.message ?? 'Autopilot Reset failed.' });
+    }
+});
+apiRouter.post('/devices/bulk', async (req, res) => {
+    const { deviceIds, action } = req.body;
+    if (!Array.isArray(deviceIds) || !action) {
+        res.status(400).json({ success: false, message: 'Missing deviceIds or action.' });
+        return;
+    }
+    const token = requireWriteToken(req, res);
+    if (!token)
+        return;
+    const actionMap = {
+        sync: 'syncDevice', reboot: 'rebootNow', autopilotReset: 'windowsAutopilotReset'
+    };
+    const results = await Promise.allSettled(deviceIds.map(id => fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${id}/${actionMap[action]}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
+    }).then(r => ({ id, ok: r.ok || r.status === 204 }))
+        .catch((e) => ({ id, ok: false, error: e?.message ?? 'Failed' }))));
+    const mapped = results.map(r => r.status === 'fulfilled' ? r.value : { id: '', ok: false, error: 'Promise rejected' });
+    res.json({ success: true, results: mapped });
+});
 export default apiRouter;
 //# sourceMappingURL=api.js.map

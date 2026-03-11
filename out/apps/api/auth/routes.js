@@ -9,15 +9,33 @@ function getRequestOrigin(req) {
     const protocol = forwardedProto || req.protocol;
     return `${protocol}://${host}`;
 }
+function decodeTokenScopes(token) {
+    try {
+        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
+        const scp = payload?.scp ?? '';
+        const roles = payload?.roles ?? [];
+        return [...scp.split(' ').filter(Boolean), ...roles];
+    }
+    catch {
+        return [];
+    }
+}
 authRouter.get('/status', (req, res) => {
     if (!req.session?.account || !req.session?.accessToken) {
-        return res.json({ connected: false, upn: '', tenantId: '', displayName: '' });
+        return res.json({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
     }
+    const scopes = decodeTokenScopes(req.session.accessToken);
+    const writeScopes = [
+        'DeviceManagementManagedDevices.PrivilegedOperations.All',
+        'DeviceManagementManagedDevices.ReadWrite.All'
+    ];
+    const hasWritePermissions = writeScopes.some(s => scopes.includes(s)) || req.session?.hasWritePermissions === true;
     return res.json({
         connected: true,
         upn: req.session.account.username ?? '',
         tenantId: req.session.account.tenantId ?? '',
-        displayName: req.session.account.name ?? ''
+        displayName: req.session.account.name ?? '',
+        hasWritePermissions
     });
 });
 /**
@@ -78,12 +96,17 @@ authRouter.get('/login', async (req, res) => {
     try {
         const origin = getRequestOrigin(req);
         const redirectUri = `${origin}/api/auth/callback`;
+        const elevated = req.query.elevated === 'true';
         req.session.authRedirectUri = redirectUri;
         req.session.authReturnUrl = origin;
+        req.session.authElevated = elevated; // store flag for callback
         const msal = getMsalApp();
+        // Use GRAPH_SCOPES_READ for normal login, GRAPH_SCOPES_WRITE for elevated
+        const scopes = elevated ? config.entra.scopesWrite : config.entra.scopes;
         const authCodeUrl = await msal.getAuthCodeUrl({
-            scopes: config.entra.scopes,
-            redirectUri
+            scopes,
+            redirectUri,
+            prompt: elevated ? 'consent' : undefined // force consent screen for write upgrade
         });
         res.redirect(authCodeUrl);
     }
@@ -98,22 +121,27 @@ authRouter.get('/callback', async (req, res) => {
     }
     try {
         const redirectUri = req.session.authRedirectUri ?? config.entra.redirectUri;
+        const isElevated = req.session.authElevated === true;
         const msal = getMsalApp();
-        const tokenResponse = await msal.acquireTokenByCode({
-            code,
-            scopes: config.entra.scopes,
-            redirectUri
-        });
+        // CRITICAL: acquireTokenByCode must use the SAME scopes that were requested in getAuthCodeUrl
+        const scopes = isElevated ? config.entra.scopesWrite : config.entra.scopes;
+        const tokenResponse = await msal.acquireTokenByCode({ code, scopes, redirectUri });
         req.session.accessToken = tokenResponse?.accessToken;
         req.session.account = {
             username: tokenResponse?.account?.username,
             tenantId: tokenResponse?.tenantId,
             name: tokenResponse?.account?.name
         };
-        const returnUrl = req.session.authReturnUrl ?? config.webAppUrl;
+        // If elevated flow — also store the write token separately
+        if (isElevated) {
+            req.session.writeAccessToken = tokenResponse?.accessToken;
+            req.session.hasWritePermissions = true;
+        }
+        // Clean up temporary session flags
+        req.session.authElevated = undefined;
         req.session.authRedirectUri = undefined;
         req.session.authReturnUrl = undefined;
-        res.redirect(returnUrl);
+        res.redirect(req.session.authReturnUrl ?? config.webAppUrl);
     }
     catch (error) {
         res.status(500).send(error instanceof Error ? error.message : 'Auth callback failed');
