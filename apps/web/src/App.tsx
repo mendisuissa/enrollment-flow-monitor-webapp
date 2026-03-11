@@ -846,6 +846,32 @@ export default function App() {
   // Tutorial modal state
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
+  // ── Global Search (Ctrl+K) ───────────────────────────────
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const globalSearchRef = useRef<HTMLInputElement>(null);
+
+  // ── JSON Viewer Modal ────────────────────────────────────
+  const [jsonModalRow, setJsonModalRow] = useState<Row | null>(null);
+
+  // Ctrl+K shortcut
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => globalSearchRef.current?.focus(), 50);
+      }
+      if (e.key === 'Escape') {
+        setSearchOpen(false);
+        setGlobalSearch('');
+        setJsonModalRow(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   const filteredErrors = ERROR_CATALOG.filter(e => {
     const matchesSearch = !errorSearch ||
       e.title.toLowerCase().includes(errorSearch.toLowerCase()) ||
@@ -856,6 +882,15 @@ export default function App() {
       e.platforms.includes(errorFilter as string);
     return matchesSearch && matchesFilter;
   });
+
+  // Global search filtered rows
+  const filteredRows = useMemo(() => {
+    if (!globalSearch.trim()) return rows;
+    const q = globalSearch.toLowerCase();
+    return rows.filter(row =>
+      Object.values(row).some(v => String(v ?? '').toLowerCase().includes(q))
+    );
+  }, [rows, globalSearch]);
 
   // Detect mobile — reactive to window resize
   const [isMobile, setIsMobile] = useState(
@@ -890,6 +925,11 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
+          {/* Global search button */}
+          <button className="btn btn-secondary search-trigger-btn" onClick={() => { setSearchOpen(true); setTimeout(() => globalSearchRef.current?.focus(), 50); }}>
+            <span>🔍</span>
+            {!isMobile && <span style={{ color: 'var(--text-dim)', fontSize: '10px', fontFamily: 'DM Mono, monospace' }}>Ctrl+K</span>}
+          </button>
           {auth.connected && (
             <span className="status-connected-pill"><span className="status-dot-pulse" />Connected</span>
           )}
@@ -1355,28 +1395,103 @@ export default function App() {
                 <div>{statusMessage || 'No data for this view.'}</div>
               </div>
             ) : (
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    {headers.map((header) => (
-                      <th key={header}>{header}</th>
+              <>
+                {/* Global search bar when active */}
+                {globalSearch && (
+                  <div className="table-search-bar">
+                    <span>🔍</span>
+                    <input
+                      className="table-search-input"
+                      value={globalSearch}
+                      onChange={e => setGlobalSearch(e.target.value)}
+                      placeholder={`Filter ${filteredRows.length} of ${rows.length} rows...`}
+                      autoFocus
+                    />
+                    <button className="table-search-clear" onClick={() => setGlobalSearch('')}>✕</button>
+                  </div>
+                )}
+                {/* Mobile: stacked cards */}
+                {isMobile ? (
+                  <div className="mobile-card-list">
+                    {filteredRows.map((row, index) => (
+                      <div
+                        key={String(row['id'] ?? index)}
+                        className={`mobile-data-card ${selectedIndex === index ? 'active' : ''}`}
+                        onClick={() => setSelectedIndex(index)}
+                      >
+                        <div className="mdc-header">
+                          <span className="mdc-title">
+                            {toText(row['deviceName'] ?? row['displayName'] ?? row['name'] ?? row['title'] ?? `Row ${index + 1}`)}
+                          </span>
+                          <div className="mdc-actions">
+                            {row['id'] && (
+                              <button className="copy-id-btn" title="Copy ID" onClick={e => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(String(row['id']));
+                                addToast('success', 'ID copied!');
+                              }}>⧉</button>
+                            )}
+                            <button className="view-json-btn" title="View JSON" onClick={e => {
+                              e.stopPropagation();
+                              setJsonModalRow(row);
+                            }}>{ '{}'}</button>
+                          </div>
+                        </div>
+                        {headers.filter(h => h !== 'id' && h !== 'details').slice(0, 4).map(h => (
+                          <div key={h} className="mdc-row">
+                            <span className="mdc-key">{h}</span>
+                            <span className="mdc-val">{toText(row[h])}</span>
+                          </div>
+                        ))}
+                      </div>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, index) => (
-                    <tr
-                      key={String(row['id'] ?? index)}
-                      className={`table-row ${selectedIndex === index ? 'active' : ''}`}
-                      onClick={() => setSelectedIndex(index)}
-                    >
-                      {headers.map((header) => (
-                        <td key={`${index}-${header}`}>{toText(row[header])}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </div>
+                ) : (
+                  /* Desktop: enhanced table */
+                  <div className="table-wrap">
+                    <table className="data-table data-table-enhanced">
+                      <thead>
+                        <tr>
+                          {headers.map((header) => (
+                            <th key={header}>{header}</th>
+                          ))}
+                          <th style={{ width: 72 }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredRows.map((row, index) => (
+                          <tr
+                            key={String(row['id'] ?? index)}
+                            className={`table-row ${selectedIndex === index ? 'active' : ''} ${index % 2 === 1 ? 'zebra' : ''}`}
+                            onClick={() => setSelectedIndex(index)}
+                          >
+                            {headers.map((header) => (
+                              <td key={`${index}-${header}`}>
+                                {header === 'id' || (String(row[header] ?? '').length === 36 && String(row[header] ?? '').includes('-')) ? (
+                                  <span className="guid-cell">
+                                    <span className="guid-text">{toText(row[header])}</span>
+                                    <button className="copy-id-btn" title="Copy ID" onClick={e => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText(toText(row[header]));
+                                      addToast('success', 'ID copied!');
+                                    }}>⧉</button>
+                                  </span>
+                                ) : toText(row[header])}
+                              </td>
+                            ))}
+                            <td>
+                              <button className="view-json-btn" title="View raw JSON" onClick={e => {
+                                e.stopPropagation();
+                                setJsonModalRow(row);
+                              }}>{ '{}'}</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )
           )}
         </div>
@@ -1408,6 +1523,71 @@ export default function App() {
           {toasts.map((toast) => (
             <div key={toast.id} className={`toast ${toast.kind}`}>{toast.message}</div>
           ))}
+        </div>
+      )}
+
+      {/* ── Global Search Modal (Ctrl+K) ── */}
+      {searchOpen && (
+        <div className="search-overlay" onClick={() => { setSearchOpen(false); setGlobalSearch(''); }}>
+          <div className="search-modal" onClick={e => e.stopPropagation()}>
+            <div className="search-modal-inner">
+              <span className="search-modal-icon">🔍</span>
+              <input
+                ref={globalSearchRef}
+                className="search-modal-input"
+                value={globalSearch}
+                onChange={e => setGlobalSearch(e.target.value)}
+                placeholder="Search across all rows… (Esc to close)"
+              />
+              {globalSearch && <span className="search-modal-count">{filteredRows.length} results</span>}
+            </div>
+            {globalSearch && filteredRows.length > 0 && (
+              <div className="search-results-preview">
+                {filteredRows.slice(0, 6).map((row, i) => (
+                  <div key={i} className="search-result-item" onClick={() => {
+                    const idx = rows.indexOf(row);
+                    setSelectedIndex(idx);
+                    setSearchOpen(false);
+                    setGlobalSearch('');
+                  }}>
+                    <span className="sri-title">{toText(row['deviceName'] ?? row['displayName'] ?? row['name'] ?? row['title'] ?? `Row ${i + 1}`)}</span>
+                    <span className="sri-sub">{toText(row['operatingSystem'] ?? row['area'] ?? row['platform'] ?? row['normalizedCategory'] ?? '')}</span>
+                  </div>
+                ))}
+                {filteredRows.length > 6 && (
+                  <div className="search-result-more">+{filteredRows.length - 6} more — press Enter to apply filter</div>
+                )}
+              </div>
+            )}
+            <div className="search-modal-footer">
+              <span>↵ to filter table</span>
+              <span>Esc to close</span>
+              <span>Ctrl+K to reopen</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── JSON Viewer Modal ── */}
+      {jsonModalRow && (
+        <div className="json-overlay" onClick={() => setJsonModalRow(null)}>
+          <div className="json-modal" onClick={e => e.stopPropagation()}>
+            <div className="json-modal-header">
+              <span className="json-modal-title">
+                {'{ }'} Raw JSON — {toText(jsonModalRow['deviceName'] ?? jsonModalRow['displayName'] ?? jsonModalRow['name'] ?? jsonModalRow['id'] ?? 'Row')}
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary" style={{ fontSize: 11 }} onClick={() => {
+                  navigator.clipboard.writeText(JSON.stringify(jsonModalRow, null, 2));
+                  addToast('success', 'JSON copied!');
+                }}>⧉ Copy</button>
+                <button className="json-close-btn" onClick={() => setJsonModalRow(null)}>✕</button>
+              </div>
+            </div>
+            <div className="json-body">
+              <pre className="json-pre">{JSON.stringify(jsonModalRow, null, 2)}</pre>
+            </div>
+          </div>
         </div>
       )}
     </div>
