@@ -14,7 +14,7 @@ export interface ViewResponse {
 
 export async function getAuthStatus() {
   const response = await api.get('/auth/status');
-  return response.data as { connected: boolean; upn: string; tenantId: string; displayName: string };
+  return response.data as { connected: boolean; upn: string; tenantId: string; displayName: string; hasWritePermissions: boolean };
 }
 
 export async function getView(view: string): Promise<ViewResponse> {

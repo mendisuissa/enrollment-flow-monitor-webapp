@@ -488,6 +488,67 @@ apiRouter.get('/logs/download', async (_req, res) => {
   }
 });
 
+// ── OCR / AI Explanation ──────────────────────────────────
+apiRouter.post('/ocr/explain', async (req, res) => {
+  const { text } = req.body as { text?: string };
+  if (!text?.trim()) {
+    return res.status(400).json({ explanation: 'No text provided. Paste an error message and try again.' });
+  }
+
+  // Look up error code in local catalog first (fast, no external call)
+  const lowerText = text.toLowerCase();
+  const catalogMatch = enrollmentErrorCatalog.find(entry => {
+    const code = entry.code.toLowerCase();
+    return lowerText.includes(code);
+  });
+
+  if (catalogMatch) {
+    const explanation = [
+      `**${catalogMatch.title}** (${catalogMatch.code})`,
+      '',
+      `**Description:** ${catalogMatch.description}`,
+      '',
+      `**Root Cause:** ${catalogMatch.cause}`,
+      '',
+      '**Recommended Actions:**',
+      ...catalogMatch.actions.map((a, i) => `${i + 1}. ${a}`)
+    ].join('\n');
+    return res.json({ explanation });
+  }
+
+  // Fallback: extract error code pattern and give generic guidance
+  const errorCodeMatch = text.match(/0x[0-9A-Fa-f]{6,8}|80\d{6}|0x8[0-9A-Fa-f]{7}/);
+  const correlationMatch = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+
+  const lines: string[] = [];
+
+  if (errorCodeMatch) {
+    lines.push(`**Error Code Detected:** \`${errorCodeMatch[0]}\``);
+    lines.push('');
+    lines.push('This error code was not found in the local catalog. General troubleshooting steps:');
+    lines.push('1. Search https://learn.microsoft.com/en-us/mem/intune for this error code.');
+    lines.push('2. Check Intune portal: Devices → Monitor → Enrollment failures.');
+    lines.push('3. Review Azure AD Sign-in logs for the user/device around the failure timestamp.');
+    lines.push('4. Verify device compliance and MDM enrollment scope in Entra ID.');
+  } else {
+    lines.push('**Enrollment Error Analysis**');
+    lines.push('');
+    lines.push('No specific error code detected. Based on the message content:');
+    lines.push('1. Verify the device has a valid Intune license assigned to the user.');
+    lines.push('2. Confirm the device is in scope for MDM auto-enrollment.');
+    lines.push('3. Check proxy/firewall rules — ensure Intune endpoints are reachable.');
+    lines.push('4. Review: https://www.microsoft.com/wamerrors for Windows-specific codes.');
+  }
+
+  if (correlationMatch) {
+    lines.push('');
+    lines.push(`**Correlation ID:** \`${correlationMatch[0]}\``);
+    lines.push('→ Use this ID in Azure AD audit logs or Intune diagnostic reports for exact trace.');
+  }
+
+  return res.json({ explanation: lines.join('\n') });
+});
+
 
 // ── Device Remediation Actions ────────────────────────────
 // These routes MUST use the write token (from GRAPH_SCOPES_WRITE elevated login).

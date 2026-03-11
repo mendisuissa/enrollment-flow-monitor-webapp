@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { ViewName } from '@efm/shared';
-type ExtendedViewName = ViewName | 'permissionCheck' | 'enrollmentErrorCatalog' | 'reports' | 'readinessChecklist';
+type ExtendedViewName = ViewName | 'permissionCheck' | 'enrollmentErrorCatalog' | 'reports' | 'readinessChecklist' | 'auditLogs' | 'privacy';
 import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
@@ -22,6 +22,7 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'enrollmentErrorCatalog', label: 'Enrollment Error Catalog', icon: '📚' },
   { id: 'reports', label: 'Reports', icon: '📈' },
   { id: 'readinessChecklist', label: 'Readiness Checklist', icon: '✅' },
+  { id: 'auditLogs', label: 'Audit Logs', icon: '📋' },
   { id: 'settings', label: 'Settings', icon: '⚙️' }
 ];
 
@@ -40,7 +41,7 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('Ready');
   const [detailsSummary, setDetailsSummary] = useState('Select a row to view details.');
   const [detailsText, setDetailsText] = useState('');
-  const [auth, setAuth] = useState({ connected: false, upn: '', tenantId: '', displayName: '' });
+  const [auth, setAuth] = useState({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
   const [ocrImageFile, setOcrImageFile] = useState<File | null>(null);
   const [ocrInputText, setOcrInputText] = useState('');
   const [ocrStatusText, setOcrStatusText] = useState('OCR: Not started');
@@ -221,6 +222,7 @@ export default function App() {
         const data = result.rows?.[0] as any;
         setDashboardData(data ?? null);
         setStatusMessage('Dashboard loaded.');
+        addAuditLog('View Dashboard', 'Dashboard loaded', 'info');
       }).catch(() => setStatusMessage('Dashboard load failed.')).finally(() => setIsViewLoading(false));
       return;
     }
@@ -299,14 +301,28 @@ export default function App() {
     addToast('success', 'Runbook copied.');
   }
 
-  async function onOpenLogs() {
-    const result = await getLogs();
-    const safeRows = Array.isArray(result.rows) ? result.rows : [];
-    setRows(safeRows);
-    setSelectedIndex(safeRows.length ? 0 : null);
-    setStatusMessage('Logs loaded in grid.');
-    window.open('/api/logs/download', '_blank');
-    addToast('info', 'Logs opened in a new tab.');
+  // ── Audit Logs ───────────────────────────────────────────
+  const [auditLogs, setAuditLogs] = useState<Array<{
+    id: string; timestamp: string; action: string; view: string;
+    details: string; user: string; result: 'success' | 'fail' | 'info';
+  }>>([]);
+
+  function addAuditLog(action: string, details: string, result: 'success' | 'fail' | 'info' = 'info') {
+    const entry = {
+      id: String(Date.now()),
+      timestamp: new Date().toISOString(),
+      action,
+      view: currentView,
+      details,
+      user: auth.upn || 'Guest',
+      result
+    };
+    setAuditLogs(prev => [entry, ...prev].slice(0, 500));
+  }
+
+  function onOpenAuditLogs() {
+    setCurrentView('auditLogs');
+    if (isMobile) setSidebarOpen(false);
   }
 
   function onExport(format: 'json' | 'csv') {
@@ -334,12 +350,25 @@ export default function App() {
   }
 
   function openConfirm(action: typeof confirmModal['action'], row?: Row) {
+    // Gate on write permissions
+    if (!auth.hasWritePermissions) {
+      setUpgradeAction(action ?? 'this action');
+      setUpgradeModalOpen(true);
+      return;
+    }
     if (row) {
       setConfirmModal({ open: true, action, deviceId: getDeviceId(row), deviceName: getDeviceName(row) });
     } else {
-      // bulk
       setConfirmModal({ open: true, action, count: selectedDevices.size });
     }
+  }
+
+  function toggleFilter(filter: string) {
+    setActiveFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(filter)) next.delete(filter); else next.add(filter);
+      return next;
+    });
   }
 
   async function executeAction() {
@@ -359,9 +388,11 @@ export default function App() {
         const res = await deviceBulkAction(ids, bulkMap[action]);
         const ok = res.results.filter(r => r.ok).length;
         addToast('success', `Bulk action: ${ok}/${ids.length} devices succeeded`);
+        addAuditLog(`Bulk ${bulkMap[action]}`, `${ok}/${ids.length} devices affected`, ok === ids.length ? 'success' : 'fail');
         setSelectedDevices(new Set());
       } catch (e: any) {
         addToast('error', `Bulk action failed: ${e?.message ?? 'Unknown error'}`);
+        addAuditLog(`Bulk ${action}`, `Failed: ${e?.message ?? 'Unknown'}`, 'fail');
       } finally {
         setActionLoading(null);
       }
@@ -374,9 +405,12 @@ export default function App() {
       if (action === 'sync') await deviceSync(deviceId);
       else if (action === 'reboot') await deviceReboot(deviceId);
       else if (action === 'autopilotReset') await deviceAutopilotReset(deviceId);
-      addToast('success', `${action === 'sync' ? 'Sync' : action === 'reboot' ? 'Reboot' : 'Autopilot Reset'} command sent successfully`);
+      const label = action === 'sync' ? 'Sync' : action === 'reboot' ? 'Reboot' : 'Autopilot Reset';
+      addToast('success', `${label} command sent successfully`);
+      addAuditLog(label, `Device: ${confirmModal.deviceName} (${deviceId})`, 'success');
     } catch (e: any) {
       addToast('error', `Action failed: ${e?.message ?? 'Unknown error'}`);
+      addAuditLog(action, `Failed on ${confirmModal.deviceName}: ${e?.message ?? 'Unknown'}`, 'fail');
     } finally {
       setActionLoading(null);
     }
@@ -964,9 +998,16 @@ export default function App() {
     deviceName?: string;
     count?: number;
   }>({ open: false, action: null });
-  const [actionLoading, setActionLoading] = useState<string | null>(null); // deviceId or 'bulk'
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [inlineSearch, setInlineSearch] = useState('');
   const inlineSearchRef = useRef<HTMLInputElement>(null);
+
+  // ── Upgrade Access / Permission Modal ────────────────────
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [upgradeAction, setUpgradeAction] = useState<string>('');
+
+  // ── Filter Chips ─────────────────────────────────────────
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
 
   // Graph Query Drawer state
   const [graphDrawerOpen, setGraphDrawerOpen] = useState(false);
@@ -1011,14 +1052,35 @@ export default function App() {
     return matchesSearch && matchesFilter;
   });
 
-  // Global search filtered rows
+  // Global search + filter chips combined
   const filteredRows = useMemo(() => {
+    let result = rows;
     const q = (globalSearch || inlineSearch).toLowerCase().trim();
-    if (!q) return rows;
-    return rows.filter(row =>
-      Object.values(row).some(v => String(v ?? '').toLowerCase().includes(q))
-    );
-  }, [rows, globalSearch, inlineSearch]);
+    if (q) {
+      result = result.filter(row =>
+        Object.values(row).some(v => String(v ?? '').toLowerCase().includes(q))
+      );
+    }
+    // Apply filter chips
+    if (activeFilters.has('non-compliant')) {
+      result = result.filter(r => String(r['complianceState'] ?? '').toLowerCase().includes('non'));
+    }
+    if (activeFilters.has('windows')) {
+      result = result.filter(r => String(r['operatingSystem'] ?? r['platform'] ?? '').toLowerCase().includes('windows'));
+    }
+    if (activeFilters.has('active-today')) {
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      result = result.filter(r => {
+        const ts = r['lastSyncDateTime'] ?? r['enrolledDateTime'] ?? r['lastCheckInTime'];
+        return ts ? new Date(String(ts)).getTime() > cutoff : false;
+      });
+    }
+    if (activeFilters.has('errors')) {
+      result = result.filter(r => String(r['enrollmentState'] ?? r['status'] ?? '').toLowerCase().includes('fail')
+        || String(r['complianceState'] ?? '').toLowerCase().includes('error'));
+    }
+    return result;
+  }, [rows, globalSearch, inlineSearch, activeFilters]);
 
   // Detect mobile — reactive to window resize
   const [isMobile, setIsMobile] = useState(
@@ -1077,7 +1139,13 @@ export default function App() {
 
           {/* Connected pill — hidden on mobile */}
           {auth.connected && !isMobile && (
-            <span className="status-connected-pill"><span className="status-dot-pulse" />Connected</span>
+            auth.hasWritePermissions ? (
+              <span className="status-connected-pill perm-write"><span className="status-dot-pulse" />Write Access</span>
+            ) : (
+              <button className="perm-readonly-pill" onClick={() => setUpgradeModalOpen(true)} title="Upgrade to Write Access">
+                🔒 Read Only
+              </button>
+            )
           )}
 
           {/* Auth actions */}
@@ -1137,7 +1205,7 @@ export default function App() {
                   <button className="btn btn-secondary text-left" onClick={() => { onExport('csv'); setSidebarOpen(false); }} disabled={!auth.connected}>Export CSV</button>
                   <button className="btn btn-secondary text-left" onClick={() => { onExport('json'); setSidebarOpen(false); }} disabled={!auth.connected}>Export JSON</button>
                   <button className="btn btn-secondary text-left" onClick={() => { onCopyRunbook(); setSidebarOpen(false); }} disabled={!auth.connected}>Copy Runbook</button>
-                  <button className="btn btn-secondary text-left" onClick={() => { onOpenLogs(); setSidebarOpen(false); }} disabled={!auth.connected}>Open Logs</button>
+                  <button className="btn btn-secondary text-left" onClick={() => { onOpenAuditLogs(); }} disabled={!auth.connected}>Audit Logs</button>
                   <div className="section-divider" />
                   <a
                     className="btn-ai-sidebar"
@@ -1176,7 +1244,7 @@ export default function App() {
               <button className="btn btn-secondary text-left" onClick={() => onExport('csv')} disabled={!auth.connected}>Export CSV</button>
               <button className="btn btn-secondary text-left" onClick={() => onExport('json')} disabled={!auth.connected}>Export JSON</button>
               <button className="btn btn-secondary text-left" onClick={onCopyRunbook} disabled={!auth.connected}>Copy Runbook</button>
-              <button className="btn btn-secondary text-left" onClick={onOpenLogs} disabled={!auth.connected}>Open Logs</button>
+              <button className="btn btn-secondary text-left" onClick={onOpenAuditLogs} disabled={!auth.connected}>Audit Logs</button>
               <div className="section-divider" />
               <a
                 className="btn-ai-sidebar"
@@ -1246,7 +1314,8 @@ export default function App() {
               </div>
 
               <div className="welcome-footer">
-                All rights reserved to modernendpoint.tech · by Menahem Suissa
+                © {new Date().getFullYear()} <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'none', fontWeight: 700 }}>modernendpoint.tech</a> · by Menahem Suissa ·{' '}
+                <button style={{ background: 'none', border: 'none', color: 'var(--amber)', cursor: 'pointer', fontWeight: 700, fontSize: 'inherit', fontFamily: 'inherit', padding: 0 }} onClick={() => setCurrentView('privacy' as ExtendedViewName)}>Privacy Policy</button>
               </div>
 
               {/* Tutorial Modal */}
@@ -1637,6 +1706,82 @@ export default function App() {
                 </div>
               )}
             </div>
+
+          ) : currentView === 'auditLogs' ? (
+            <div className="audit-shell">
+              <div className="audit-header">
+                <div>
+                  <div className="audit-title">📋 Audit Logs</div>
+                  <div className="audit-subtitle">User actions performed in this session — {auditLogs.length} events recorded</div>
+                </div>
+                <button className="btn btn-secondary" style={{ fontSize: 11 }} onClick={() => {
+                  const csv = ['Timestamp,User,Action,View,Details,Result',
+                    ...auditLogs.map(l => `"${l.timestamp}","${l.user}","${l.action}","${l.view}","${l.details}","${l.result}"`)
+                  ].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a'); a.href = url; a.download = 'audit-logs.csv'; a.click();
+                  URL.revokeObjectURL(url);
+                  addToast('success', 'Audit logs exported');
+                }}>⬇ Export CSV</button>
+              </div>
+              {auditLogs.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-state-title">No actions recorded yet</div>
+                  <div>Actions you perform (Sync, Reboot, Reset, view navigation) will appear here.</div>
+                </div>
+              ) : (
+                <div className="audit-list">
+                  {auditLogs.map(log => (
+                    <div key={log.id} className={`audit-entry audit-${log.result}`}>
+                      <div className="audit-icon">
+                        {log.result === 'success' ? '✅' : log.result === 'fail' ? '❌' : 'ℹ️'}
+                      </div>
+                      <div className="audit-content">
+                        <div className="audit-action-row">
+                          <span className="audit-action">{log.action}</span>
+                          <span className={`audit-badge audit-badge-${log.result}`}>{log.result}</span>
+                          <span className="audit-view">in {log.view}</span>
+                        </div>
+                        <div className="audit-details">{log.details}</div>
+                      </div>
+                      <div className="audit-meta">
+                        <div className="audit-user">{log.user}</div>
+                        <div className="audit-time">{new Date(log.timestamp).toLocaleTimeString()}</div>
+                        <div className="audit-date">{new Date(log.timestamp).toLocaleDateString()}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          ) : currentView === 'privacy' ? (
+            <div className="privacy-shell">
+              <div className="privacy-header">
+                <button className="btn btn-secondary" style={{ fontSize: 11, marginBottom: 16, alignSelf: 'flex-start' }} onClick={() => setCurrentView('dashboard')}>← Back</button>
+                <h1 className="privacy-title">Privacy Policy</h1>
+                <p className="privacy-effective">Effective date: January 1, 2025 · <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" className="privacy-site-link">modernendpoint.tech</a></p>
+              </div>
+              <div className="privacy-body">
+                {[
+                  { title: '1. Introduction', content: 'Enrollment Flow Monitor ("the App") is operated by Menahem Suissa / modernendpoint.tech. This Privacy Policy explains how we collect, use, and protect information when you use the App to monitor Microsoft Intune enrollment data in your organization.' },
+                  { title: '2. Data We Access', content: "The App connects to Microsoft Graph API using delegated permissions granted by you or your organization's IT administrator. It accesses device management data including device names, compliance states, enrollment statuses, and user principal names solely to display them within the App interface." },
+                  { title: '3. Data Storage', content: "The App does not store, cache, or transmit your Microsoft tenant data to any external server owned by us. All Microsoft Graph data is fetched in real-time and displayed only in your browser session. Session data (authentication tokens) is stored server-side in an encrypted session for the duration of your login only." },
+                  { title: '4. Authentication & Permissions', content: 'Authentication is handled entirely through Microsoft Entra ID (Azure AD) using the official OAuth 2.0 authorization code flow. We request only the minimum Graph API permissions required. Privileged permissions (DeviceManagementManagedDevices.PrivilegedOperations.All) are requested separately, only when you explicitly choose to enable remote actions.' },
+                  { title: '5. Audit Logs', content: 'In-app audit logs record actions you perform (device sync, reboot, reset commands) within your browser session. These logs are stored in memory only and cleared when you close or refresh the browser. You may export them as CSV at any time.' },
+                  { title: '6. Third-Party Services', content: "The App integrates exclusively with Microsoft Graph API (graph.microsoft.com). No third-party analytics, advertising, or tracking services are used. The optional AI Assistant button links to an external ChatGPT-based tool; its use is governed by OpenAI's privacy policy." },
+                  { title: '7. Your Rights', content: 'You may disconnect your Microsoft account at any time using the "Disconnect" option in the user menu. This destroys your session and removes all cached authentication data.' },
+                  { title: '8. Contact', content: 'For any privacy-related questions, please visit modernendpoint.tech or contact Menahem Suissa directly through the website.' },
+                ].map(section => (
+                  <div key={section.title} className="privacy-section">
+                    <h2 className="privacy-section-title">{section.title}</h2>
+                    <p className="privacy-section-body">{section.content}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
           ) : (
             isViewLoading ? (
               <div>
@@ -1652,7 +1797,28 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* ── Persistent inline search bar (always visible for device views) ── */}
+                {/* ── Filter Chips ── */}
+                {isDeviceView && (
+                  <div className="filter-chips-row">
+                    {[
+                      { id: 'non-compliant', label: '⚠️ Non-Compliant', color: 'red' },
+                      { id: 'windows',       label: '🪟 Windows Only',   color: 'blue' },
+                      { id: 'active-today',  label: '🟢 Active Today',   color: 'green' },
+                      { id: 'errors',        label: '❌ Errors Only',    color: 'red' },
+                    ].map(chip => (
+                      <button
+                        key={chip.id}
+                        className={`filter-chip filter-chip-${chip.color} ${activeFilters.has(chip.id) ? 'active' : ''}`}
+                        onClick={() => toggleFilter(chip.id)}
+                      >{chip.label}</button>
+                    ))}
+                    {activeFilters.size > 0 && (
+                      <button className="filter-chip-clear" onClick={() => setActiveFilters(new Set())}>Clear filters ✕</button>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Persistent inline search bar ── */}
                 <div className="inline-search-wrap">
                   <div className="inline-search-bar">
                     <span className="inline-search-icon">🔍</span>
@@ -1746,18 +1912,18 @@ export default function App() {
                           ))}
                           {isDeviceView && devId && (
                             <div className="mdc-device-actions">
-                              <button className={`daction-btn daction-sync ${isActing ? 'daction-loading' : ''}`}
+                              <button className={`daction-btn daction-sync ${isActing ? 'daction-loading' : ''} ${!auth.hasWritePermissions ? 'daction-locked' : ''}`}
                                 disabled={!!actionLoading}
                                 onClick={e => { e.stopPropagation(); openConfirm('sync', row); }}
-                              >{isActing ? '⏳' : '🔄'} Sync</button>
-                              <button className={`daction-btn daction-reboot ${isActing ? 'daction-loading' : ''}`}
+                              >{isActing ? '⏳' : auth.hasWritePermissions ? '🔄' : '🔒'} Sync</button>
+                              <button className={`daction-btn daction-reboot ${isActing ? 'daction-loading' : ''} ${!auth.hasWritePermissions ? 'daction-locked' : ''}`}
                                 disabled={!!actionLoading}
                                 onClick={e => { e.stopPropagation(); openConfirm('reboot', row); }}
-                              >{isActing ? '⏳' : '⚡'} Reboot</button>
-                              <button className={`daction-btn daction-reset ${isActing ? 'daction-loading' : ''}`}
+                              >{isActing ? '⏳' : auth.hasWritePermissions ? '⚡' : '🔒'} Reboot</button>
+                              <button className={`daction-btn daction-reset ${isActing ? 'daction-loading' : ''} ${!auth.hasWritePermissions ? 'daction-locked' : ''}`}
                                 disabled={!!actionLoading}
                                 onClick={e => { e.stopPropagation(); openConfirm('autopilotReset', row); }}
-                              >{isActing ? '⏳' : '♻️'} Reset</button>
+                              >{isActing ? '⏳' : auth.hasWritePermissions ? '♻️' : '🔒'} Reset</button>
                             </div>
                           )}
                         </div>
@@ -1832,20 +1998,20 @@ export default function App() {
                                   <div className="row-actions">
                                     <button className="view-json-btn" title="View JSON" onClick={() => setJsonModalRow(row)}>{ '{}'}</button>
                                     {isDeviceView && devId && (<>
-                                      <button className={`daction-btn daction-sync ${isActing ? 'daction-loading' : ''}`}
-                                        disabled={!!actionLoading} title="Sync device"
+                                      <button className={`daction-btn daction-sync ${isActing ? 'daction-loading' : ''} ${!auth.hasWritePermissions ? 'daction-locked' : ''}`}
+                                        disabled={!!actionLoading} title={auth.hasWritePermissions ? 'Sync device' : '🔒 Requires Write Access'}
                                         onClick={() => openConfirm('sync', row)}>
-                                        {isActing ? '⏳' : '🔄'}
+                                        {isActing ? '⏳' : auth.hasWritePermissions ? '🔄' : '🔒'}
                                       </button>
-                                      <button className={`daction-btn daction-reboot ${isActing ? 'daction-loading' : ''}`}
-                                        disabled={!!actionLoading} title="Reboot device"
+                                      <button className={`daction-btn daction-reboot ${isActing ? 'daction-loading' : ''} ${!auth.hasWritePermissions ? 'daction-locked' : ''}`}
+                                        disabled={!!actionLoading} title={auth.hasWritePermissions ? 'Reboot device' : '🔒 Requires Write Access'}
                                         onClick={() => openConfirm('reboot', row)}>
-                                        {isActing ? '⏳' : '⚡'}
+                                        {isActing ? '⏳' : auth.hasWritePermissions ? '⚡' : '🔒'}
                                       </button>
-                                      <button className={`daction-btn daction-reset ${isActing ? 'daction-loading' : ''}`}
-                                        disabled={!!actionLoading} title="Autopilot Reset"
+                                      <button className={`daction-btn daction-reset ${isActing ? 'daction-loading' : ''} ${!auth.hasWritePermissions ? 'daction-locked' : ''}`}
+                                        disabled={!!actionLoading} title={auth.hasWritePermissions ? 'Autopilot Reset' : '🔒 Requires Write Access'}
                                         onClick={() => openConfirm('autopilotReset', row)}>
-                                        {isActing ? '⏳' : '♻️'}
+                                        {isActing ? '⏳' : auth.hasWritePermissions ? '♻️' : '🔒'}
                                       </button>
                                     </>)}
                                   </div>
@@ -1882,7 +2048,14 @@ export default function App() {
 
       <div className="surface footer">
         <div className={`status-badge ${statusKind(statusMessage)}`}>{statusMessage}</div>
-        <div>All rights reserved to modern endpoint.tech (by Menahem Suissa).</div>
+        <div className="footer-links">
+          <span>© {new Date().getFullYear()} All rights reserved</span>
+          <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" className="footer-link">modernendpoint.tech</a>
+          <span className="footer-sep">·</span>
+          <span>by Menahem Suissa</span>
+          <span className="footer-sep">·</span>
+          <button className="footer-link footer-link-btn" onClick={() => setCurrentView('privacy' as ExtendedViewName)}>Privacy Policy</button>
+        </div>
       </div>
 
       {toasts.length > 0 && (
@@ -1890,6 +2063,51 @@ export default function App() {
           {toasts.map((toast) => (
             <div key={toast.id} className={`toast ${toast.kind}`}>{toast.message}</div>
           ))}
+        </div>
+      )}
+
+      {/* ── Upgrade Access Modal (Permissions) ── */}
+      {upgradeModalOpen && (
+        <div className="confirm-overlay" onClick={() => setUpgradeModalOpen(false)}>
+          <div className="confirm-modal upgrade-modal" onClick={e => e.stopPropagation()}>
+            <div className="upgrade-shield">🛡️</div>
+            <div className="upgrade-badge">Admin Permissions Required</div>
+            <div className="confirm-title" style={{ fontSize: 17 }}>Upgrade Access</div>
+            <div className="confirm-body">
+              <p>
+                Remote actions like <strong style={{ color: 'var(--amber)' }}>{
+                  upgradeAction === 'sync' ? 'Device Sync'
+                  : upgradeAction === 'reboot' ? 'Remote Reboot'
+                  : upgradeAction?.includes('reset') ? 'Autopilot Reset'
+                  : 'Remote Actions'
+                }</strong> require elevated Microsoft Graph permissions.
+              </p>
+              <div className="upgrade-scope-list">
+                <div className="upgrade-scope">
+                  <span className="scope-dot scope-dot-purple" />
+                  <span>DeviceManagementManagedDevices.<strong>PrivilegedOperations.All</strong></span>
+                </div>
+                <div className="upgrade-scope">
+                  <span className="scope-dot scope-dot-blue" />
+                  <span>DeviceManagementManagedDevices.<strong>ReadWrite.All</strong></span>
+                </div>
+              </div>
+              <p className="upgrade-note">
+                You'll be redirected to Microsoft to grant consent. This is a one-time action per tenant.
+              </p>
+            </div>
+            <div className="confirm-actions">
+              <button className="btn btn-secondary" onClick={() => setUpgradeModalOpen(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary upgrade-auth-btn" onClick={() => {
+                setUpgradeModalOpen(false);
+                window.location.href = '/api/auth/login?elevated=true';
+              }}>
+                🔑 Authorize Now
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
