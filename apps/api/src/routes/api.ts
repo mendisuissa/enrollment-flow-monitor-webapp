@@ -488,14 +488,39 @@ apiRouter.get('/logs/download', async (_req, res) => {
   }
 });
 
+
 // ── Device Remediation Actions ────────────────────────────
+// These routes MUST use the write token (from GRAPH_SCOPES_WRITE elevated login).
+// If writeAccessToken is missing, the user has not yet consented to write permissions.
+function getWriteToken(req: any): string | null {
+  return req.session?.writeAccessToken ?? null;
+}
+
+function requireWriteToken(req: any, res: any): string | null {
+  const token = getWriteToken(req);
+  if (!token) {
+    res.status(403).json({
+      success: false,
+      code: 'WRITE_PERMISSIONS_REQUIRED',
+      message: 'This action requires elevated permissions. Please authorize via the Upgrade Access flow.'
+    });
+    return null;
+  }
+  return token;
+}
+
 apiRouter.post('/devices/:id/sync', async (req, res) => {
   try {
-    const token = req.session?.accessToken;
-    if (!token) { res.status(401).json({ success: false, message: "Not authenticated." }); return; }
-    await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/syncDevice`, {
+    const token = requireWriteToken(req, res);
+    if (!token) return;
+    const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/syncDevice`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
     });
+    if (!graphRes.ok && graphRes.status !== 204) {
+      const body = await graphRes.text().catch(() => '');
+      res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
+      return;
+    }
     res.json({ success: true, message: 'Sync command sent.' });
   } catch (e: any) {
     res.status(500).json({ success: false, message: e?.message ?? 'Sync failed.' });
@@ -504,11 +529,16 @@ apiRouter.post('/devices/:id/sync', async (req, res) => {
 
 apiRouter.post('/devices/:id/reboot', async (req, res) => {
   try {
-    const token = req.session?.accessToken;
-    if (!token) { res.status(401).json({ success: false, message: "Not authenticated." }); return; }
-    await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/rebootNow`, {
+    const token = requireWriteToken(req, res);
+    if (!token) return;
+    const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/rebootNow`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
     });
+    if (!graphRes.ok && graphRes.status !== 204) {
+      const body = await graphRes.text().catch(() => '');
+      res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
+      return;
+    }
     res.json({ success: true, message: 'Reboot command sent.' });
   } catch (e: any) {
     res.status(500).json({ success: false, message: e?.message ?? 'Reboot failed.' });
@@ -517,11 +547,16 @@ apiRouter.post('/devices/:id/reboot', async (req, res) => {
 
 apiRouter.post('/devices/:id/autopilotReset', async (req, res) => {
   try {
-    const token = req.session?.accessToken;
-    if (!token) { res.status(401).json({ success: false, message: "Not authenticated." }); return; }
-    await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/windowsAutopilotReset`, {
+    const token = requireWriteToken(req, res);
+    if (!token) return;
+    const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/windowsAutopilotReset`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
     });
+    if (!graphRes.ok && graphRes.status !== 204) {
+      const body = await graphRes.text().catch(() => '');
+      res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
+      return;
+    }
     res.json({ success: true, message: 'Autopilot Reset command sent.' });
   } catch (e: any) {
     res.status(500).json({ success: false, message: e?.message ?? 'Autopilot Reset failed.' });
@@ -534,16 +569,17 @@ apiRouter.post('/devices/bulk', async (req, res) => {
     res.status(400).json({ success: false, message: 'Missing deviceIds or action.' });
     return;
   }
+  const token = requireWriteToken(req, res);
+  if (!token) return;
+
   const actionMap: Record<string, string> = {
     sync: 'syncDevice', reboot: 'rebootNow', autopilotReset: 'windowsAutopilotReset'
   };
-  const token = req.session?.accessToken;
-    if (!token) { res.status(401).json({ success: false, message: "Not authenticated." }); return; }
   const results = await Promise.allSettled(
     deviceIds.map(id =>
       fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${id}/${actionMap[action]}`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
-      }).then(() => ({ id, ok: true }))
+      }).then(r => ({ id, ok: r.ok || r.status === 204 }))
         .catch((e: any) => ({ id, ok: false, error: e?.message ?? 'Failed' }))
     )
   );
