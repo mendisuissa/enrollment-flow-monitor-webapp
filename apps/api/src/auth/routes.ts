@@ -105,21 +105,29 @@ authRouter.get('/debug/token', (req: any, res) => {
 authRouter.get('/login', async (req: any, res) => {
   try {
     const origin = getRequestOrigin(req);
-    const redirectUri = `${origin}/api/auth/callback`;
+
+    // Use the configured ENTRA_REDIRECT_URI if set (required in Azure App Service).
+    // Fall back to dynamic origin only in local dev when env var is not set.
+    const redirectUri = config.entra.redirectUri !== 'http://localhost:4000/api/auth/callback'
+      ? config.entra.redirectUri
+      : `${origin}/api/auth/callback`;
+
     const elevated = req.query.elevated === 'true';
 
     req.session.authRedirectUri = redirectUri;
-    req.session.authReturnUrl = origin;
-    req.session.authElevated = elevated; // store flag for callback
+    req.session.authReturnUrl   = config.webAppUrl !== 'http://localhost:5173'
+      ? config.webAppUrl   // production: use configured WEB_APP_URL
+      : origin;            // local dev: use dynamic origin
+
+    req.session.authElevated = elevated;
 
     const msal = getMsalApp();
-    // Use GRAPH_SCOPES_READ for normal login, GRAPH_SCOPES_WRITE for elevated
     const scopes = elevated ? config.entra.scopesWrite : config.entra.scopes;
 
     const authCodeUrl = await msal.getAuthCodeUrl({
       scopes,
       redirectUri,
-      prompt: elevated ? 'consent' : undefined  // force consent screen for write upgrade
+      prompt: elevated ? 'consent' : undefined
     });
 
     res.redirect(authCodeUrl);
@@ -135,34 +143,44 @@ authRouter.get('/callback', async (req: any, res) => {
   }
 
   try {
-    const redirectUri = req.session.authRedirectUri ?? config.entra.redirectUri;
-    const isElevated = req.session.authElevated === true;
+    // Read everything from session BEFORE clearing anything
+    const redirectUri  = req.session.authRedirectUri ?? config.entra.redirectUri;
+    const returnUrl    = req.session.authReturnUrl    ?? config.webAppUrl;
+    const isElevated   = req.session.authElevated === true;
 
     const msal = getMsalApp();
-    // CRITICAL: acquireTokenByCode must use the SAME scopes that were requested in getAuthCodeUrl
+    // CRITICAL: must use the SAME scopes that were sent to getAuthCodeUrl
     const scopes = isElevated ? config.entra.scopesWrite : config.entra.scopes;
 
     const tokenResponse = await msal.acquireTokenByCode({ code, scopes, redirectUri });
 
-    req.session.accessToken = tokenResponse?.accessToken;
-    req.session.account = {
-      username: tokenResponse?.account?.username,
-      tenantId: tokenResponse?.tenantId,
-      name: tokenResponse?.account?.name
-    };
-
-    // If elevated flow — also store the write token separately
+    // For normal login: store as main access token (read)
+    // For elevated login: keep existing read token intact, only update write token
     if (isElevated) {
-      req.session.writeAccessToken = tokenResponse?.accessToken;
+      req.session.writeAccessToken    = tokenResponse?.accessToken;
       req.session.hasWritePermissions = true;
+      // Update account info in case it refreshed
+      req.session.account = {
+        username: tokenResponse?.account?.username ?? req.session.account?.username,
+        tenantId: tokenResponse?.tenantId          ?? req.session.account?.tenantId,
+        name:     tokenResponse?.account?.name     ?? req.session.account?.name
+      };
+    } else {
+      req.session.accessToken = tokenResponse?.accessToken;
+      req.session.account = {
+        username: tokenResponse?.account?.username,
+        tenantId: tokenResponse?.tenantId,
+        name:     tokenResponse?.account?.name
+      };
     }
 
-    // Clean up temporary session flags
-    req.session.authElevated = undefined;
+    // Clean up temp flags AFTER reading them
+    req.session.authElevated   = undefined;
     req.session.authRedirectUri = undefined;
-    req.session.authReturnUrl = undefined;
+    req.session.authReturnUrl   = undefined;
 
-    res.redirect(req.session.authReturnUrl ?? config.webAppUrl);
+    // Use the returnUrl captured at the top, not the now-cleared session value
+    res.redirect(returnUrl);
   } catch (error) {
     res.status(500).send(error instanceof Error ? error.message : 'Auth callback failed');
   }
