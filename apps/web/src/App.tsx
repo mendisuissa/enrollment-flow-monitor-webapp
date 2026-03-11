@@ -86,8 +86,7 @@ export default function App() {
       const result = await getAuthStatus();
       setAuth(result);
     } catch {
-      setAuth({ connected: false, upn: '', tenantId: '', displayName: '' });
-    }
+      setAuth({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });    }
   }
 
   async function loadView(view: ExtendedViewName) {
@@ -284,7 +283,7 @@ export default function App() {
   async function onDisconnect() {
     await api.post('/auth/logout');
     setAuth({ connected: false, upn: '', tenantId: '', displayName: '' });
-    setRows([]);
+    setAuth({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
     setSelectedIndex(null);
     setStatusMessage('Disconnected.');
     setDetailsSummary('Disconnected from tenant.');
