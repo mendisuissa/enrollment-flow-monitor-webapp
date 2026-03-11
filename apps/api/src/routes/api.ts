@@ -495,29 +495,30 @@ apiRouter.post('/ocr/explain', async (req, res) => {
     return res.status(400).json({ explanation: 'No text provided. Paste an error message and try again.' });
   }
 
-  // Look up error code in local catalog first (fast, no external call)
   const lowerText = text.toLowerCase();
-  const catalogMatch = enrollmentErrorCatalog.find(entry => {
-    const code = entry.code.toLowerCase();
-    return lowerText.includes(code);
-  });
+
+  // Look up error code in local catalog (EnrollmentErrorRow fields: errorCode, title, symptoms, likelyRootCause, remediation)
+  const catalogMatch = enrollmentErrorCatalog.find(entry =>
+    lowerText.includes(entry.errorCode.toLowerCase()) ||
+    lowerText.includes(entry.title.toLowerCase().slice(0, 20))
+  );
 
   if (catalogMatch) {
-    const explanation = [
-      `**${catalogMatch.title}** (${catalogMatch.code})`,
+    const lines = [
+      `**${catalogMatch.title}** (\`${catalogMatch.errorCode}\`)`,
+      `Severity: ${catalogMatch.severity} · Area: ${catalogMatch.area}`,
       '',
-      `**Description:** ${catalogMatch.description}`,
+      `**Symptoms:** ${catalogMatch.symptoms}`,
       '',
-      `**Root Cause:** ${catalogMatch.cause}`,
+      `**Root Cause:** ${catalogMatch.likelyRootCause}`,
       '',
-      '**Recommended Actions:**',
-      ...catalogMatch.actions.map((a, i) => `${i + 1}. ${a}`)
-    ].join('\n');
-    return res.json({ explanation });
+      `**Remediation:** ${catalogMatch.remediation}`
+    ];
+    return res.json({ explanation: lines.join('\n') });
   }
 
-  // Fallback: extract error code pattern and give generic guidance
-  const errorCodeMatch = text.match(/0x[0-9A-Fa-f]{6,8}|80\d{6}|0x8[0-9A-Fa-f]{7}/);
+  // Fallback: extract error code / correlation ID from raw text
+  const errorCodeMatch = text.match(/0x[0-9A-Fa-f]{6,8}|80\d{6}/);
   const correlationMatch = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
 
   const lines: string[] = [];
@@ -525,25 +526,25 @@ apiRouter.post('/ocr/explain', async (req, res) => {
   if (errorCodeMatch) {
     lines.push(`**Error Code Detected:** \`${errorCodeMatch[0]}\``);
     lines.push('');
-    lines.push('This error code was not found in the local catalog. General troubleshooting steps:');
+    lines.push('This code was not found in the local catalog. General steps:');
     lines.push('1. Search https://learn.microsoft.com/en-us/mem/intune for this error code.');
-    lines.push('2. Check Intune portal: Devices → Monitor → Enrollment failures.');
-    lines.push('3. Review Azure AD Sign-in logs for the user/device around the failure timestamp.');
-    lines.push('4. Verify device compliance and MDM enrollment scope in Entra ID.');
+    lines.push('2. Check Intune portal → Devices → Monitor → Enrollment failures.');
+    lines.push('3. Review Azure AD Sign-in logs around the failure timestamp.');
+    lines.push('4. Verify the user has a valid Intune license and is in MDM scope.');
   } else {
     lines.push('**Enrollment Error Analysis**');
     lines.push('');
-    lines.push('No specific error code detected. Based on the message content:');
+    lines.push('No specific error code detected. General troubleshooting:');
     lines.push('1. Verify the device has a valid Intune license assigned to the user.');
     lines.push('2. Confirm the device is in scope for MDM auto-enrollment.');
-    lines.push('3. Check proxy/firewall rules — ensure Intune endpoints are reachable.');
+    lines.push('3. Check proxy/firewall — ensure Intune endpoints are reachable.');
     lines.push('4. Review: https://www.microsoft.com/wamerrors for Windows-specific codes.');
   }
 
   if (correlationMatch) {
     lines.push('');
     lines.push(`**Correlation ID:** \`${correlationMatch[0]}\``);
-    lines.push('→ Use this ID in Azure AD audit logs or Intune diagnostic reports for exact trace.');
+    lines.push('→ Use this ID in Azure AD audit logs for an exact trace.');
   }
 
   return res.json({ explanation: lines.join('\n') });
