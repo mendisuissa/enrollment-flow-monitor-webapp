@@ -1094,7 +1094,7 @@ export default function App() {
   }, []);
 
   // ── PDF Export ───────────────────────────────────────────
-  async function generateEnrollmentPDF(data: any, toast: (k: string, m: string) => void) {
+  async function generateEnrollmentPDF(data: any, toast: (k: 'info' | 'success' | 'error', m: string) => void) {
     if (!data) return;
     toast('info', 'Generating PDF report...');
     try {

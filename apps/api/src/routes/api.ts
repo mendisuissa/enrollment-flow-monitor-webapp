@@ -327,10 +327,18 @@ function buildChecklist(data: Awaited<ReturnType<typeof getViewData>>, scenario:
 export const apiRouter = Router();
 apiRouter.use(ensureConnected);
 
-apiRouter.get('/debug/token', (req, res) => {
+// ── Debug routes — development only, blocked in production ──
+function devOnly(req: Request, res: Response, next: NextFunction): void {
+  if (config.nodeEnv === 'production') {
+    res.status(404).json({ message: 'Not found.' });
+    return;
+  }
+  next();
+}
+
+apiRouter.get('/debug/token', devOnly, (req, res) => {
   const token = req.session?.accessToken;
   if (!token) return res.status(401).json({ connected: false });
-
   res.json({
     connected: true,
     user: req.session?.account ?? null,
@@ -339,22 +347,40 @@ apiRouter.get('/debug/token', (req, res) => {
   });
 });
 
-// בדיקת Graph בסיסית (GET) כדי להבין אם הטננט באמת "חי"
-apiRouter.get('/debug/graph', async (req, res) => {
+apiRouter.get('/debug/graph', devOnly, async (req, res) => {
   const token = req.session?.accessToken;
   if (!token) return res.status(401).json({ message: 'Not connected' });
-
-  const p = typeof req.query.path === 'string' ? req.query.path : '/v1.0/organization';
-
   try {
-    // פה אתה צריך להשתמש באותה פונקציה/Provider שיש לך ב-graph/provider.js
-    // לדוגמה: const data = await graphGet(p, token);
-    // אם אין לך graphGet – תגיד לי איך provider ממומש ואני אתאים שורה-בשורה.
-    const data = await getDataBundle(token); // זמני: רק כדי לראות שזה בכלל עובד
-    res.json({ ok: true, path: p, data });
+    const data = await getDataBundle(token);
+    // Return only counts — never raw device/user data
+    res.json({
+      ok: true,
+      mockMode: config.mockMode,
+      deviceCount: data.devices?.length ?? 0,
+      userCount: data.users?.length ?? 0,
+      appCount: data.apps?.length ?? 0,
+    });
   } catch (e: any) {
     res.status(500).json({ ok: false, message: e?.message ?? 'Graph failed' });
   }
+});
+
+// Safe connection diagnostics — available in production, only shows safe metadata
+apiRouter.get('/debug/connection', async (req, res) => {
+  const token = req.session?.accessToken;
+  res.json({
+    connected: Boolean(token),
+    mockMode: config.mockMode,
+    hasToken: Boolean(token),
+    tokenExpired: token ? (() => {
+      try {
+        const exp = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()).exp;
+        return exp ? Date.now() / 1000 > exp : null;
+      } catch { return null; }
+    })() : null,
+    account: req.session?.account ?? null,
+    nodeEnv: config.nodeEnv,
+  });
 });
 
 apiRouter.get('/refresh', async (req, res) => {
