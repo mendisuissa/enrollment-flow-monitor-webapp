@@ -282,7 +282,6 @@ export default function App() {
 
   async function onDisconnect() {
     await api.post('/auth/logout');
-    setAuth({ connected: false, upn: '', tenantId: '', displayName: '' });
     setAuth({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
     setSelectedIndex(null);
     setStatusMessage('Disconnected.');

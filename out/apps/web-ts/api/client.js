@@ -24,4 +24,21 @@ export async function getLogs() {
     const response = await api.get('/logs');
     return response.data;
 }
+// ── Device Remediation Actions ────────────────────────────
+export async function deviceSync(deviceId) {
+    const response = await api.post(`/devices/${deviceId}/sync`);
+    return response.data;
+}
+export async function deviceReboot(deviceId) {
+    const response = await api.post(`/devices/${deviceId}/reboot`);
+    return response.data;
+}
+export async function deviceAutopilotReset(deviceId) {
+    const response = await api.post(`/devices/${deviceId}/autopilotReset`);
+    return response.data;
+}
+export async function deviceBulkAction(deviceIds, action) {
+    const response = await api.post('/devices/bulk', { deviceIds, action });
+    return response.data;
+}
 //# sourceMappingURL=client.js.map
