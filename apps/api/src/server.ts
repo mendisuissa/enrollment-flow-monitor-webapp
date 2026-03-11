@@ -48,7 +48,10 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    sameSite: 'lax',
+    // 'none' required in production when frontend/backend share the same origin via
+    // Azure custom domain but the OAuth redirect goes through azurewebsites.net first.
+    // 'lax' breaks the session cookie on the redirect back from Entra.
+    sameSite: isProduction ? 'none' : 'lax',
     secure: isProduction
   }
 }));
@@ -133,6 +136,26 @@ app.get('/api/diag', (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+
+// Public diagnostic — no auth required, safe metadata only
+app.get('/api/debug/connection', (req: any, res) => {
+  const token = req.session?.accessToken;
+  res.json({
+    connected: Boolean(token),
+    mockMode: config.mockMode,
+    hasToken: Boolean(token),
+    tokenExpired: token ? (() => {
+      try {
+        const exp = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()).exp;
+        return exp ? Date.now() / 1000 > exp : null;
+      } catch { return null; }
+    })() : null,
+    account: req.session?.account ? { username: req.session.account.username } : null,
+    nodeEnv: config.nodeEnv,
+    corsOrigins: config.corsOrigins,
+  });
+});
+
 app.use('/api', apiRouter);
 
 if (isProduction) {

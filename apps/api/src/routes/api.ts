@@ -365,24 +365,6 @@ apiRouter.get('/debug/graph', devOnly, async (req, res) => {
   }
 });
 
-// Safe connection diagnostics — available in production, only shows safe metadata
-apiRouter.get('/debug/connection', async (req, res) => {
-  const token = req.session?.accessToken;
-  res.json({
-    connected: Boolean(token),
-    mockMode: config.mockMode,
-    hasToken: Boolean(token),
-    tokenExpired: token ? (() => {
-      try {
-        const exp = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()).exp;
-        return exp ? Date.now() / 1000 > exp : null;
-      } catch { return null; }
-    })() : null,
-    account: req.session?.account ?? null,
-    nodeEnv: config.nodeEnv,
-  });
-});
-
 apiRouter.get('/refresh', async (req, res) => {
   try {
     await getViewData(req.session.accessToken);
