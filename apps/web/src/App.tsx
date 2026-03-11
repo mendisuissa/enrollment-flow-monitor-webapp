@@ -107,6 +107,11 @@ export default function App() {
       setSelectedIndex(safeRows.length > 0 ? 0 : null);
       setStatusMessage(result.message || `${view} loaded.`);
 
+      // Capture dashboard KPI data
+      if (view === 'dashboard' && safeRows[0]) {
+        setDashboardData(safeRows[0]);
+      }
+
       // Update sidebar badges
       setBadgeCounts((prev) => {
         const next = { ...prev };
@@ -294,6 +299,20 @@ export default function App() {
 
   function onExport(format: 'json' | 'csv') {
     window.open(`/api/export?view=${currentView}&format=${format}`, '_blank');
+  }
+
+  async function runGraphQuery() {
+    if (!graphQuery.trim()) return;
+    setGraphLoading(true);
+    setGraphResult('');
+    try {
+      const res = await api.get(`/debug/graph?path=/${graphQuery.replace(/^\//, '')}`);
+      setGraphResult(JSON.stringify(res.data, null, 2));
+    } catch (e: any) {
+      setGraphResult(JSON.stringify({ error: e?.message ?? 'Query failed' }, null, 2));
+    } finally {
+      setGraphLoading(false);
+    }
   }
 
   function onPickImage() {
@@ -846,6 +865,15 @@ export default function App() {
   // Tutorial modal state
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
+  // Dashboard KPI state
+  const [dashboardData, setDashboardData] = useState<any>(null);
+
+  // Graph Query Drawer state
+  const [graphDrawerOpen, setGraphDrawerOpen] = useState(false);
+  const [graphQuery, setGraphQuery] = useState('deviceManagement/managedDevices?$top=5&$select=deviceName,operatingSystem,complianceState,userPrincipalName');
+  const [graphResult, setGraphResult] = useState<string>('');
+  const [graphLoading, setGraphLoading] = useState(false);
+
   // ── Global Search (Ctrl+K) ───────────────────────────────
   const [globalSearch, setGlobalSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -930,6 +958,11 @@ export default function App() {
             <span>🔍</span>
             {!isMobile && <span style={{ color: 'var(--text-dim)', fontSize: '10px', fontFamily: 'DM Mono, monospace' }}>Ctrl+K</span>}
           </button>
+          {auth.connected && (
+            <button className="btn btn-secondary" onClick={() => setGraphDrawerOpen(true)} title="Advanced Graph Query">
+              {isMobile ? '⚡' : '⚡ Graph Query'}
+            </button>
+          )}
           {auth.connected && (
             <span className="status-connected-pill"><span className="status-dot-pulse" />Connected</span>
           )}
@@ -1124,6 +1157,109 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+              )}
+            </div>
+          ) : currentView === 'dashboard' ? (
+            <div className="dashboard-shell">
+              <div className="dashboard-header">
+                <div>
+                  <div className="dashboard-title">📊 Dashboard</div>
+                  <div className="dashboard-subtitle">
+                    {dashboardData ? `Last refresh: ${new Date(dashboardData.lastRefresh ?? '').toLocaleTimeString()}` : 'Loading...'}
+                  </div>
+                </div>
+                <button className="btn btn-primary" onClick={onRefresh} disabled={isRefreshing}>
+                  {isRefreshing ? '↻ Refreshing…' : '↻ Refresh'}
+                </button>
+              </div>
+
+              {isViewLoading || !dashboardData ? (
+                <div className="kpi-row">
+                  {[1,2,3,4].map(i => <div key={i} className="skeleton" style={{ height: 88, borderRadius: 12 }} />)}
+                </div>
+              ) : (
+                <>
+                  {/* KPI Cards */}
+                  <div className="kpi-row">
+                    <div className="kpi-card">
+                      <div className="kpi-icon kpi-icon-blue">🖥️</div>
+                      <div className="kpi-value">{dashboardData.totalDevices ?? 0}</div>
+                      <div className="kpi-label">Total Devices</div>
+                      <div className="kpi-indicator kpi-indicator-blue">All Platforms</div>
+                    </div>
+                    <div className="kpi-card">
+                      <div className="kpi-icon kpi-icon-amber">🪟</div>
+                      <div className="kpi-value">{dashboardData.windowsEnrollmentDevices ?? 0}</div>
+                      <div className="kpi-label">Windows Devices</div>
+                      <div className="kpi-indicator kpi-indicator-amber">Enrolled</div>
+                    </div>
+                    <div className="kpi-card">
+                      <div className="kpi-icon kpi-icon-green">✅</div>
+                      <div className="kpi-value">
+                        {(dashboardData.topEnrollmentStates ?? []).find((s: any) => s.category === 'Compliant')?.count ?? 0}
+                      </div>
+                      <div className="kpi-label">Compliant Devices</div>
+                      <div className="kpi-indicator kpi-indicator-green">Policy OK</div>
+                    </div>
+                    <div className="kpi-card">
+                      <div className="kpi-icon kpi-icon-red">⚠️</div>
+                      <div className="kpi-value">
+                        {(dashboardData.topEnrollmentStates ?? []).find((s: any) => s.category === 'Non-compliant')?.count ?? 0}
+                      </div>
+                      <div className="kpi-label">Non-Compliant</div>
+                      <div className="kpi-indicator kpi-indicator-red">Action Required</div>
+                    </div>
+                    <div className="kpi-card">
+                      <div className="kpi-icon kpi-icon-teal">📱</div>
+                      <div className="kpi-value">{dashboardData.mobileEnrollmentDevices ?? 0}</div>
+                      <div className="kpi-label">Mobile Devices</div>
+                      <div className="kpi-indicator kpi-indicator-teal">iOS + Android</div>
+                    </div>
+                    <div className="kpi-card">
+                      <div className="kpi-icon kpi-icon-purple">🍎</div>
+                      <div className="kpi-value">{dashboardData.macEnrollmentDevices ?? 0}</div>
+                      <div className="kpi-label">macOS Devices</div>
+                      <div className="kpi-indicator kpi-indicator-blue">Mac Fleet</div>
+                    </div>
+                  </div>
+
+                  {/* Compliance bar */}
+                  <div className="dashboard-section-title">Compliance Breakdown</div>
+                  <div className="compliance-bars">
+                    {(dashboardData.topEnrollmentStates ?? []).map((s: any) => {
+                      const total = dashboardData.totalDevices || 1;
+                      const pct = Math.round((s.count / total) * 100);
+                      const color = s.category === 'Compliant' ? 'var(--green)' : s.category === 'Non-compliant' ? 'var(--red)' : 'var(--amber)';
+                      return (
+                        <div key={s.category} className="compliance-bar-row">
+                          <div className="cbr-label">{s.category}</div>
+                          <div className="cbr-track">
+                            <div className="cbr-fill" style={{ width: `${pct}%`, background: color }} />
+                          </div>
+                          <div className="cbr-count" style={{ color }}>{s.count} <span className="cbr-pct">({pct}%)</span></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Platform breakdown */}
+                  <div className="dashboard-section-title">Platform Overview</div>
+                  <div className="platform-grid">
+                    {[
+                      { label: 'Windows', value: dashboardData.windowsEnrollmentDevices, icon: '🪟', color: 'var(--amber)' },
+                      { label: 'Mobile (iOS/Android)', value: dashboardData.mobileEnrollmentDevices, icon: '📱', color: 'var(--teal)' },
+                      { label: 'macOS', value: dashboardData.macEnrollmentDevices, icon: '🍎', color: 'var(--purple)' },
+                      { label: 'Autopilot User-Driven', value: dashboardData.autopilotUserDrivenDevices, icon: '👤', color: 'var(--green)' },
+                      { label: 'Autopilot Automatic', value: dashboardData.autopilotAutomaticDevices, icon: '⚙️', color: 'var(--text-muted)' },
+                    ].map(p => (
+                      <div key={p.label} className="platform-tile">
+                        <span className="pt-icon">{p.icon}</span>
+                        <span className="pt-value" style={{ color: p.color }}>{p.value ?? 0}</span>
+                        <span className="pt-label">{p.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           ) : currentView === 'ocr' ? (
@@ -1523,6 +1659,83 @@ export default function App() {
           {toasts.map((toast) => (
             <div key={toast.id} className={`toast ${toast.kind}`}>{toast.message}</div>
           ))}
+        </div>
+      )}
+
+      {/* ── Graph Query Drawer ── */}
+      {graphDrawerOpen && (
+        <div className="graph-drawer-overlay" onClick={() => setGraphDrawerOpen(false)}>
+          <div className="graph-drawer" onClick={e => e.stopPropagation()}>
+            <div className="graph-drawer-header">
+              <div>
+                <div className="graph-drawer-title">⚡ Advanced Graph Query</div>
+                <div className="graph-drawer-sub">Run Microsoft Graph API queries directly against your tenant</div>
+              </div>
+              <button className="json-close-btn" onClick={() => setGraphDrawerOpen(false)}>✕</button>
+            </div>
+
+            <div className="graph-drawer-body">
+              <div className="graph-query-label">GET https://graph.microsoft.com/v1.0/</div>
+              <div className="graph-query-row">
+                <input
+                  className="graph-query-input"
+                  value={graphQuery}
+                  onChange={e => setGraphQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && runGraphQuery()}
+                  placeholder="deviceManagement/managedDevices?$top=10"
+                  spellCheck={false}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={runGraphQuery}
+                  disabled={graphLoading}
+                  style={{ flexShrink: 0 }}
+                >
+                  {graphLoading ? '...' : '▶ Run'}
+                </button>
+              </div>
+
+              {/* Quick templates */}
+              <div className="graph-templates">
+                <div className="graph-template-label">Quick templates:</div>
+                <div className="graph-template-list">
+                  {[
+                    { label: 'All Devices', q: 'deviceManagement/managedDevices?$top=10&$select=deviceName,operatingSystem,complianceState,userPrincipalName' },
+                    { label: 'Non-Compliant', q: 'deviceManagement/managedDevices?$filter=complianceState eq \'noncompliant\'&$top=10' },
+                    { label: 'Autopilot Devices', q: 'deviceManagement/windowsAutopilotDeviceIdentities?$top=10' },
+                    { label: 'Enrollment Config', q: 'deviceManagement/deviceEnrollmentConfigurations' },
+                    { label: 'Users', q: 'users?$top=10&$select=displayName,userPrincipalName,accountEnabled' },
+                  ].map(t => (
+                    <button key={t.label} className="graph-template-btn" onClick={() => {
+                      setGraphQuery(t.q);
+                      setGraphResult('');
+                    }}>{t.label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Result */}
+              {graphResult && (
+                <div className="graph-result-wrap">
+                  <div className="graph-result-header">
+                    <span className="graph-result-label">Response</span>
+                    <button className="btn btn-secondary" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => {
+                      navigator.clipboard.writeText(graphResult);
+                      addToast('success', 'JSON copied!');
+                    }}>⧉ Copy</button>
+                  </div>
+                  <pre className="graph-result-pre">{graphResult}</pre>
+                </div>
+              )}
+              {graphLoading && (
+                <div className="graph-loading">
+                  <div className="skeleton" style={{ height: 24 }} />
+                  <div className="skeleton" style={{ height: 24 }} />
+                  <div className="skeleton" style={{ height: 24 }} />
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
