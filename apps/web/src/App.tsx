@@ -1093,6 +1093,195 @@ export default function App() {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
+  // ── PDF Export ───────────────────────────────────────────
+  async function generateEnrollmentPDF(data: any, toast: (k: string, m: string) => void) {
+    if (!data) return;
+    toast('info', 'Generating PDF report...');
+    try {
+      // Load jsPDF dynamically from CDN
+      await new Promise<void>((resolve, reject) => {
+        if ((window as any).jspdf) { resolve(); return; }
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        s.onload = () => resolve();
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      const { jsPDF } = (window as any).jspdf;
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const W = 210, H = 297;
+      const navy = [13,27,42], navyMid = [22,32,50], navyLight = [30,45,66];
+      const amber = [245,158,11], teal = [14,165,233], green = [16,185,129];
+      const red = [239,68,68], purple = [99,102,241];
+      const txt = [232,237,245], muted = [122,144,171];
+
+      // Load both logo versions as base64
+      const loadImg = async (path: string) => {
+        try {
+          const resp = await fetch(path);
+          if (!resp.ok) return '';
+          const buf = await resp.arrayBuffer();
+          let bin = '';
+          new Uint8Array(buf).forEach(b => bin += String.fromCharCode(b));
+          return btoa(bin);
+        } catch(_) { return ''; }
+      };
+      const logoAmberB64     = await loadImg('/logo.png');          // amber, full opacity
+      const logoWatermarkB64 = await loadImg('/logo_watermark.png'); // amber, 15% opacity
+
+      const drawPageShell = (pg: number, total: number) => {
+        // Background
+        doc.setFillColor(...navy); doc.rect(0, 0, W, H, 'F');
+        // Watermark — amber logo pre-baked at low opacity, centered
+        if (logoWatermarkB64) {
+          try { doc.addImage(`data:image/png;base64,${logoWatermarkB64}`, 'PNG', W/2-45, H/2-45, 90, 90, 'wm', 'NONE'); } catch(_) {}
+        }
+        // Header bar
+        doc.setFillColor(...navyMid); doc.rect(0, 0, W, 20, 'F');
+        doc.setFillColor(...amber);   doc.rect(0, 20, W, 0.7, 'F');
+        // Logo in header (amber, clear)
+        if (logoAmberB64) {
+          try { doc.addImage(`data:image/png;base64,${logoAmberB64}`, 'PNG', 6, 2, 16, 16, 'hdr', 'NONE'); } catch(_) {}
+        }
+        doc.setTextColor(...amber);   doc.setFontSize(10); doc.setFont('helvetica','bold');
+        doc.text('MODERN ENDPOINT', 25, 8);
+        doc.setTextColor(...muted);   doc.setFontSize(5.5); doc.setFont('helvetica','normal');
+        doc.text('Enterprise Architecture Journal', 25, 13);
+        doc.setTextColor(...amber);   doc.setFontSize(11); doc.setFont('helvetica','bold');
+        doc.text('Enrollment Flow Monitor — Report', W-8, 9, {align:'right'});
+        doc.setTextColor(...muted);   doc.setFontSize(5.5); doc.setFont('helvetica','normal');
+        doc.text(`Generated: ${new Date().toLocaleString()}`, W-8, 15, {align:'right'});
+        // Footer
+        doc.setFillColor(...navyMid); doc.rect(0, H-10, W, 10, 'F');
+        doc.setFillColor(...amber);   doc.rect(0, H-10, W, 0.4, 'F');
+        doc.setTextColor(...muted);   doc.setFontSize(5.5);
+        doc.text('enrollment.modernendpoint.tech  ·  Enrollment Flow Monitor', 8, H-3.5);
+        doc.text(`© ${new Date().getFullYear()} modernendpoint.tech — Confidential`, W/2, H-3.5, {align:'center'});
+        doc.text(`Page ${pg} of ${total}`, W-8, H-3.5, {align:'right'});
+      };
+
+      let y = 0;
+      const section = (title: string) => {
+        doc.setFillColor(...navyLight); doc.rect(8, y, W-16, 7, 'F');
+        doc.setFillColor(...amber);     doc.rect(8, y, 1.2, 7, 'F');
+        doc.setTextColor(...txt);       doc.setFontSize(6.5); doc.setFont('helvetica','bold');
+        doc.text(title.toUpperCase(), 13, y+4.8);
+        y += 11;
+      };
+
+      // ── PAGE 1 ──────────────────────────────────────────
+      drawPageShell(1, 2);
+      y = 25;
+
+      // KPI row
+      const kw = (W-16-9)/4, kh = 22;
+      const kpis = [
+        ['Total Devices',    String(data.totalDevices??0),                      teal],
+        ['Compliance Rate',  `${data.overallComplianceRate??0}%`,               green],
+        ['Active Incidents', String(data.activeIncidents??0),                   (data.activeIncidents??0)>0?red:green],
+        ['Platforms',        String((data.platformBreakdown??[]).length),        purple],
+      ] as [string, string, number[]][];
+      kpis.forEach(([label, val, col], i) => {
+        const x = 8 + i*(kw+3);
+        doc.setFillColor(...navyLight); doc.roundedRect(x, y, kw, kh, 2, 2, 'F');
+        doc.setFillColor(...col);       doc.roundedRect(x, y, kw, 2, 1, 1, 'F');
+        doc.setTextColor(...col);       doc.setFontSize(16); doc.setFont('helvetica','bold');
+        doc.text(val, x+kw/2, y+kh/2+2, {align:'center'});
+        doc.setTextColor(...muted);     doc.setFontSize(5.5); doc.setFont('helvetica','normal');
+        doc.text(label, x+kw/2, y+kh-2.5, {align:'center'});
+      });
+      y += kh + 8;
+
+      // Platform breakdown
+      section('Platform Breakdown');
+      (data.platformBreakdown??[]).forEach((p: any) => {
+        const tot = p.count||1, pct = p.compliant/tot;
+        const bx=50, bw=W-50-36, bh=5;
+        doc.setTextColor(...txt); doc.setFontSize(7); doc.setFont('helvetica','normal');
+        doc.text(p.platform, 10, y+3.8);
+        doc.setFillColor(...navyLight); doc.roundedRect(bx, y, bw, bh, 2, 2, 'F');
+        doc.setFillColor(...green);     doc.roundedRect(bx, y, bw*pct, bh, 2, 2, 'F');
+        if (p.nonCompliant>0) { doc.setFillColor(...red); doc.roundedRect(bx+bw*pct, y, bw*(p.nonCompliant/tot), bh, 2, 2, 'F'); }
+        doc.setTextColor(...muted); doc.setFontSize(6);
+        doc.text(`${p.compliant} ✓  ${p.nonCompliant} ✗  / ${p.count}`, W-8, y+4, {align:'right'});
+        y += 10;
+      });
+      y += 4;
+
+      // Health scores
+      const hs = data.healthScores??[];
+      if (hs.length > 0) {
+        section('Platform Health Scores');
+        const cw = (W-16-(hs.length-1)*3)/hs.length, ch=28;
+        hs.forEach((h: any, i: number) => {
+          const cx = 8+i*(cw+3);
+          doc.setFillColor(...navyLight); doc.roundedRect(cx, y, cw, ch, 2, 2, 'F');
+          const sc = h.score>=75?green:h.score>=50?amber:red;
+          doc.setTextColor(...sc); doc.setFontSize(14); doc.setFont('helvetica','bold');
+          doc.text(String(h.score), cx+cw/2, y+14, {align:'center'});
+          doc.setFontSize(5); doc.setFont('helvetica','normal');
+          doc.text('/100', cx+cw/2, y+19, {align:'center'});
+          doc.setTextColor(...txt); doc.setFontSize(6); doc.setFont('helvetica','bold');
+          doc.text(h.platform, cx+cw/2, y+25, {align:'center'});
+        });
+        y += ch + 8;
+      }
+
+      // ── PAGE 2 ──────────────────────────────────────────
+      doc.addPage();
+      drawPageShell(2, 2);
+      y = 25;
+
+      // Top errors table
+      const errs = data.topErrors??[];
+      if (errs.length > 0) {
+        section('Top Enrollment Errors');
+        const sevC: Record<string,number[]> = {High:red, Medium:amber, Low:teal};
+        errs.slice(0,12).forEach((e: any, i: number) => {
+          const rh=8, ry=y;
+          doc.setFillColor(...(i%2===0?navyLight:navyMid)); doc.rect(8, ry, W-16, rh, 'F');
+          doc.setTextColor(...muted); doc.setFontSize(6); doc.setFont('helvetica','bold');
+          doc.text(`#${i+1}`, 11, ry+5.5);
+          const sc = sevC[e.severity]??teal;
+          doc.setFillColor(...sc); doc.roundedRect(18, ry+1.5, 13, 5, 1, 1, 'F');
+          doc.setTextColor(255,255,255); doc.setFontSize(4.5); doc.setFont('helvetica','bold');
+          doc.text((e.severity||'LOW').toUpperCase(), 24.5, ry+5.2, {align:'center'});
+          doc.setTextColor(...teal); doc.setFontSize(6); doc.setFont('helvetica','bold');
+          doc.text(String(e.errorCode), 34, ry+5.5);
+          doc.setTextColor(...txt); doc.setFontSize(6); doc.setFont('helvetica','normal');
+          doc.text(String(e.title||'').substring(0,68), 70, ry+5.5);
+          doc.setTextColor(...amber); doc.setFontSize(6); doc.setFont('helvetica','bold');
+          doc.text(`${e.count} devices`, W-10, ry+5.5, {align:'right'});
+          y += rh+1;
+        });
+        y += 6;
+      }
+
+      // Executive summary
+      section('Executive Summary');
+      doc.setFillColor(...navyLight); doc.roundedRect(8, y, W-16, 38, 2, 2, 'F');
+      doc.setFillColor(...amber);     doc.rect(8, y, 1.2, 38, 'F');
+      const lines = [
+        `Total managed devices: ${data.totalDevices??'N/A'}`,
+        `Overall compliance rate: ${data.overallComplianceRate??'N/A'}%`,
+        `Active incidents: ${data.activeIncidents??0}`,
+        `Platforms monitored: ${(data.platformBreakdown??[]).map((p:any)=>p.platform).join(', ')}`,
+        `Report generated: ${new Date().toLocaleString()}`,
+        `Source: Enrollment Flow Monitor · enrollment.modernendpoint.tech`,
+      ];
+      lines.forEach((line, i) => {
+        doc.setTextColor(...(i===lines.length-1?muted:txt)); doc.setFontSize(7); doc.setFont('helvetica', i===0?'bold':'normal');
+        doc.text(line, 14, y+7+i*5.5);
+      });
+
+      doc.save(`enrollment-report-${new Date().toISOString().slice(0,10)}.pdf`);
+      toast('success', 'PDF exported successfully!');
+    } catch(err) {
+      console.error('PDF generation error:', err);
+      toast('error', 'PDF generation failed — check console');
+    }
+  }
+
   return (
     <div className="app-shell">
       <div className="surface topbar">
@@ -1572,10 +1761,7 @@ export default function App() {
                   <div className="reports-title">📈 Enrollment Reports</div>
                   <div className="reports-subtitle">Live analytics — generated {reportData ? new Date(reportData.generatedAt).toLocaleString() : '...'}</div>
                 </div>
-                <button className="btn btn-primary" onClick={() => {
-                  const el = document.getElementById('reports-print-area');
-                  if (el) { window.print(); }
-                }}>⬇ Export PDF</button>
+                <button className="btn btn-primary" onClick={() => generateEnrollmentPDF(reportData, addToast)}>⬇ Export PDF</button>
               </div>
               {!reportData ? (
                 <div className="empty-state"><div className="empty-state-title">Loading reports...</div></div>
