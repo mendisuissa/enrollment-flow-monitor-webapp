@@ -12,13 +12,13 @@
     "prisma:migrate": "prisma migrate dev --name init"
   },
   "dependencies": {
+    "@azure/msal-node": "^2.14.0",
     "@efm/shared": "*",
     "@prisma/client": "^5.22.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "express-session": "^1.18.1",
-    "@azure/msal-node": "^2.14.0",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
     "zod": "^3.23.8"
@@ -27,7 +27,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/express-session": "^1.18.0",
-    "@types/node": "^22.8.6",
+    "@types/node": "^22.19.15",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"

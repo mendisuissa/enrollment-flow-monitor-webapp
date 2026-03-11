@@ -36,3 +36,24 @@ export async function getLogs() {
   const response = await api.get('/logs');
   return response.data as ViewResponse;
 }
+
+// ── Device Remediation Actions ────────────────────────────
+export async function deviceSync(deviceId: string) {
+  const response = await api.post(`/devices/${deviceId}/sync`);
+  return response.data as { success: boolean; message: string };
+}
+
+export async function deviceReboot(deviceId: string) {
+  const response = await api.post(`/devices/${deviceId}/reboot`);
+  return response.data as { success: boolean; message: string };
+}
+
+export async function deviceAutopilotReset(deviceId: string) {
+  const response = await api.post(`/devices/${deviceId}/autopilotReset`);
+  return response.data as { success: boolean; message: string };
+}
+
+export async function deviceBulkAction(deviceIds: string[], action: 'sync' | 'reboot' | 'autopilotReset') {
+  const response = await api.post('/devices/bulk', { deviceIds, action });
+  return response.data as { success: boolean; results: Array<{ id: string; ok: boolean; error?: string }> };
+}

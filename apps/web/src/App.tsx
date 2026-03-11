@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { ViewName } from '@efm/shared';
 type ExtendedViewName = ViewName | 'permissionCheck' | 'enrollmentErrorCatalog' | 'reports' | 'readinessChecklist';
-import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData } from './api/client.js';
+import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
 type Row = Record<string, unknown>;
@@ -212,6 +212,18 @@ export default function App() {
       }).catch(() => setChecklistItems([]));
       return;
     }
+    if (currentView === 'dashboard') {
+      setRows([]);
+      setSelectedIndex(null);
+      setIsViewLoading(true);
+      setStatusMessage('Loading dashboard...');
+      getView('dashboard').then(result => {
+        const data = result.rows?.[0] as any;
+        setDashboardData(data ?? null);
+        setStatusMessage('Dashboard loaded.');
+      }).catch(() => setStatusMessage('Dashboard load failed.')).finally(() => setIsViewLoading(false));
+      return;
+    }
 
     void loadView(currentView);
   }, [auth.connected, currentView]);
@@ -314,6 +326,81 @@ export default function App() {
       setGraphLoading(false);
     }
   }
+
+  // ── Device action helpers ─────────────────────────────────
+  function getDeviceId(row: Row): string { return String(row['id'] ?? row['deviceId'] ?? ''); }
+  function getDeviceName(row: Row): string {
+    return toText(row['deviceName'] ?? row['displayName'] ?? row['name'] ?? 'Unknown Device');
+  }
+
+  function openConfirm(action: typeof confirmModal['action'], row?: Row) {
+    if (row) {
+      setConfirmModal({ open: true, action, deviceId: getDeviceId(row), deviceName: getDeviceName(row) });
+    } else {
+      // bulk
+      setConfirmModal({ open: true, action, count: selectedDevices.size });
+    }
+  }
+
+  async function executeAction() {
+    const { action, deviceId, count } = confirmModal;
+    setConfirmModal(m => ({ ...m, open: false }));
+    if (!action) return;
+
+    const isBulk = action.startsWith('bulk-');
+
+    if (isBulk) {
+      setActionLoading('bulk');
+      const ids = Array.from(selectedDevices);
+      const bulkMap: Record<string, 'sync' | 'reboot' | 'autopilotReset'> = {
+        'bulk-sync': 'sync', 'bulk-reboot': 'reboot', 'bulk-reset': 'autopilotReset'
+      };
+      try {
+        const res = await deviceBulkAction(ids, bulkMap[action]);
+        const ok = res.results.filter(r => r.ok).length;
+        addToast('success', `Bulk action: ${ok}/${ids.length} devices succeeded`);
+        setSelectedDevices(new Set());
+      } catch (e: any) {
+        addToast('error', `Bulk action failed: ${e?.message ?? 'Unknown error'}`);
+      } finally {
+        setActionLoading(null);
+      }
+      return;
+    }
+
+    if (!deviceId) return;
+    setActionLoading(deviceId);
+    try {
+      if (action === 'sync') await deviceSync(deviceId);
+      else if (action === 'reboot') await deviceReboot(deviceId);
+      else if (action === 'autopilotReset') await deviceAutopilotReset(deviceId);
+      addToast('success', `${action === 'sync' ? 'Sync' : action === 'reboot' ? 'Reboot' : 'Autopilot Reset'} command sent successfully`);
+    } catch (e: any) {
+      addToast('error', `Action failed: ${e?.message ?? 'Unknown error'}`);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  function toggleDeviceSelect(deviceId: string) {
+    setSelectedDevices(prev => {
+      const next = new Set(prev);
+      if (next.has(deviceId)) next.delete(deviceId); else next.add(deviceId);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedDevices.size === filteredRows.length) {
+      setSelectedDevices(new Set());
+    } else {
+      setSelectedDevices(new Set(filteredRows.map(r => getDeviceId(r)).filter(Boolean)));
+    }
+  }
+
+  // Device views that support remediation actions
+  const DEVICE_VIEWS: ExtendedViewName[] = ['windowsAutopilot', 'autopilotUserDriven', 'autopilotPreProvisioning', 'windowsEnrollment', 'mobileEnrollment', 'macEnrollment'];
+  const isDeviceView = DEVICE_VIEWS.includes(currentView);
 
   function onPickImage() {
     fileInputRef.current?.click();
@@ -868,6 +955,19 @@ export default function App() {
   // Dashboard KPI state
   const [dashboardData, setDashboardData] = useState<any>(null);
 
+  // ── Device Remediation state ─────────────────────────────
+  const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
+  const [confirmModal, setConfirmModal] = useState<{
+    open: boolean;
+    action: 'sync' | 'reboot' | 'autopilotReset' | 'bulk-sync' | 'bulk-reboot' | 'bulk-reset' | null;
+    deviceId?: string;
+    deviceName?: string;
+    count?: number;
+  }>({ open: false, action: null });
+  const [actionLoading, setActionLoading] = useState<string | null>(null); // deviceId or 'bulk'
+  const [inlineSearch, setInlineSearch] = useState('');
+  const inlineSearchRef = useRef<HTMLInputElement>(null);
+
   // Graph Query Drawer state
   const [graphDrawerOpen, setGraphDrawerOpen] = useState(false);
   const [graphQuery, setGraphQuery] = useState('deviceManagement/managedDevices?$top=5&$select=deviceName,operatingSystem,complianceState,userPrincipalName');
@@ -913,12 +1013,12 @@ export default function App() {
 
   // Global search filtered rows
   const filteredRows = useMemo(() => {
-    if (!globalSearch.trim()) return rows;
-    const q = globalSearch.toLowerCase();
+    const q = (globalSearch || inlineSearch).toLowerCase().trim();
+    if (!q) return rows;
     return rows.filter(row =>
       Object.values(row).some(v => String(v ?? '').toLowerCase().includes(q))
     );
-  }, [rows, globalSearch]);
+  }, [rows, globalSearch, inlineSearch]);
 
   // Detect mobile — reactive to window resize
   const [isMobile, setIsMobile] = useState(
@@ -947,43 +1047,63 @@ export default function App() {
           </div>
           <div className="topbar-titles">
             <span className="topbar-title">Enrollment Flow Monitor</span>
-            <span className="topbar-subtitle">
-              {auth.connected ? `● Signed in: ${auth.upn}` : '● Public preview mode'}
-            </span>
+            {!isMobile && (
+              <span className="topbar-subtitle">
+                {auth.connected ? `● Signed in: ${auth.upn}` : '● Public preview mode'}
+              </span>
+            )}
           </div>
         </div>
         <div className="topbar-actions">
-          {/* Global search button */}
-          <button className="btn btn-secondary search-trigger-btn" onClick={() => { setSearchOpen(true); setTimeout(() => globalSearchRef.current?.focus(), 50); }}>
+          {/* Search — always visible */}
+          <button className="btn btn-secondary search-trigger-btn" onClick={() => { setSearchOpen(true); setTimeout(() => globalSearchRef.current?.focus(), 50); }} title="Search (Ctrl+K)">
             <span>🔍</span>
             {!isMobile && <span style={{ color: 'var(--text-dim)', fontSize: '10px', fontFamily: 'DM Mono, monospace' }}>Ctrl+K</span>}
           </button>
+
+          {/* Graph Query — icon only on mobile */}
           {auth.connected && (
             <button className="btn btn-secondary" onClick={() => setGraphDrawerOpen(true)} title="Advanced Graph Query">
               {isMobile ? '⚡' : '⚡ Graph Query'}
             </button>
           )}
-          {auth.connected && (
+
+          {/* Theme — hidden on mobile (accessible from sidebar) */}
+          {!isMobile && (
+            <button className="btn btn-secondary" onClick={onCycleTheme}>
+              {themePreference === 'system' ? `Theme: ${effectiveTheme}` : `Theme: ${themePreference}`}
+            </button>
+          )}
+
+          {/* Connected pill — hidden on mobile */}
+          {auth.connected && !isMobile && (
             <span className="status-connected-pill"><span className="status-dot-pulse" />Connected</span>
           )}
-          <button className="btn btn-secondary" onClick={onCycleTheme}>
-            Theme: {themePreference === 'system' ? `System (${effectiveTheme})` : themePreference}
-          </button>
+
+          {/* Auth actions */}
           {!auth.connected ? (
-            <button className="btn btn-primary" onClick={() => { window.location.href = '/api/auth/login'; }}>Sign in</button>
+            <button className="btn btn-primary" onClick={() => { window.location.href = '/api/auth/login'; }}>
+              {isMobile ? 'Sign in' : '🔑 Sign in'}
+            </button>
           ) : (
             <>
-              <button className="btn btn-primary" onClick={onRefresh} disabled={isRefreshing}>
-                {isRefreshing ? 'Refreshing…' : '↻ Refresh'}
+              {/* Refresh — icon only on mobile */}
+              <button className="btn btn-primary topbar-refresh-btn" onClick={onRefresh} disabled={isRefreshing} title="Refresh data">
+                {isRefreshing ? '↻' : '↻ Refresh'}
               </button>
-              <div className="user-menu">
+              <div className="user-menu" style={{ position: 'relative' }}>
                 <div className="user-chip-btn" onClick={() => setIsUserMenuOpen((current) => !current)}>
                   <div className="user-chip-avatar">{(auth.displayName || auth.upn || 'U')[0].toUpperCase()}</div>
-                  <span className="user-chip-name">{auth.displayName || auth.upn?.split('@')[0] || 'Account'}</span>
+                  {!isMobile && <span className="user-chip-name">{auth.displayName || auth.upn?.split('@')[0] || 'Account'}</span>}
                 </div>
                 {isUserMenuOpen && (
                   <div className="user-menu-pop">
                     <div className="menu-user">{auth.upn || 'Connected user'}</div>
+                    {isMobile && (
+                      <button className="btn btn-secondary text-left" onClick={onCycleTheme} style={{ width: '100%' }}>
+                        Theme: {themePreference}
+                      </button>
+                    )}
                     <button className="btn btn-danger" onClick={onDisconnect}>Disconnect</button>
                   </div>
                 )}
@@ -1532,99 +1652,210 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* Global search bar when active */}
-                {globalSearch && (
-                  <div className="table-search-bar">
-                    <span>🔍</span>
+                {/* ── Persistent inline search bar (always visible for device views) ── */}
+                <div className="inline-search-wrap">
+                  <div className="inline-search-bar">
+                    <span className="inline-search-icon">🔍</span>
                     <input
-                      className="table-search-input"
-                      value={globalSearch}
-                      onChange={e => setGlobalSearch(e.target.value)}
-                      placeholder={`Filter ${filteredRows.length} of ${rows.length} rows...`}
-                      autoFocus
+                      ref={inlineSearchRef}
+                      className="inline-search-input"
+                      value={inlineSearch}
+                      onChange={e => { setInlineSearch(e.target.value); setGlobalSearch(''); }}
+                      placeholder="Search devices, users, serial numbers..."
                     />
-                    <button className="table-search-clear" onClick={() => setGlobalSearch('')}>✕</button>
+                    {(inlineSearch || globalSearch) && (
+                      <button className="inline-search-clear" onClick={() => { setInlineSearch(''); setGlobalSearch(''); }}>✕</button>
+                    )}
+                    {(inlineSearch || globalSearch) && (
+                      <span className="inline-search-count">{filteredRows.length}/{rows.length}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Bulk Action Floating Bar ── */}
+                {isDeviceView && selectedDevices.size > 0 && (
+                  <div className="bulk-action-bar">
+                    <span className="bulk-count">{selectedDevices.size} device{selectedDevices.size !== 1 ? 's' : ''} selected</span>
+                    <div className="bulk-actions">
+                      <button
+                        className="bulk-btn bulk-btn-sync"
+                        disabled={actionLoading === 'bulk'}
+                        onClick={() => openConfirm('bulk-sync')}
+                      >🔄 Sync {selectedDevices.size}</button>
+                      <button
+                        className="bulk-btn bulk-btn-reboot"
+                        disabled={actionLoading === 'bulk'}
+                        onClick={() => openConfirm('bulk-reboot')}
+                      >⚡ Reboot {selectedDevices.size}</button>
+                      <button
+                        className="bulk-btn bulk-btn-reset"
+                        disabled={actionLoading === 'bulk'}
+                        onClick={() => openConfirm('bulk-reset')}
+                      >⚠️ Reset {selectedDevices.size}</button>
+                      <button className="bulk-btn bulk-btn-clear" onClick={() => setSelectedDevices(new Set())}>✕ Clear</button>
+                    </div>
                   </div>
                 )}
+
                 {/* Mobile: stacked cards */}
                 {isMobile ? (
                   <div className="mobile-card-list">
-                    {filteredRows.map((row, index) => (
-                      <div
-                        key={String(row['id'] ?? index)}
-                        className={`mobile-data-card ${selectedIndex === index ? 'active' : ''}`}
-                        onClick={() => setSelectedIndex(index)}
-                      >
-                        <div className="mdc-header">
-                          <span className="mdc-title">
-                            {toText(row['deviceName'] ?? row['displayName'] ?? row['name'] ?? row['title'] ?? `Row ${index + 1}`)}
-                          </span>
-                          <div className="mdc-actions">
-                            {Boolean(row['id']) && (
-                              <button className="copy-id-btn" title="Copy ID" onClick={e => {
-                                e.stopPropagation();
-                                navigator.clipboard.writeText(String(row['id']));
-                                addToast('success', 'ID copied!');
-                              }}>⧉</button>
+                    {filteredRows.length === 0 ? (
+                      <div className="empty-state"><div className="empty-state-title">No matching devices</div><div>Try a different search term.</div></div>
+                    ) : filteredRows.map((row, index) => {
+                      const devId = getDeviceId(row);
+                      const isSelected = selectedDevices.has(devId);
+                      const isActing = actionLoading === devId;
+                      const compState = String(row['complianceState'] ?? row['status'] ?? '').toLowerCase();
+                      return (
+                        <div
+                          key={devId || index}
+                          className={`mobile-data-card ${selectedIndex === index ? 'active' : ''} ${isSelected ? 'mdc-selected' : ''}`}
+                          onClick={() => setSelectedIndex(index)}
+                        >
+                          <div className="mdc-header">
+                            {isDeviceView && devId && (
+                              <input type="checkbox" className="mdc-checkbox" checked={isSelected}
+                                onChange={() => toggleDeviceSelect(devId)}
+                                onClick={e => e.stopPropagation()} />
                             )}
-                            <button className="view-json-btn" title="View JSON" onClick={e => {
-                              e.stopPropagation();
-                              setJsonModalRow(row);
-                            }}>{ '{}'}</button>
+                            <span className="mdc-title">
+                              {toText(row['deviceName'] ?? row['displayName'] ?? row['name'] ?? row['title'] ?? `Row ${index + 1}`)}
+                            </span>
+                            {compState && (
+                              <span className={`status-pill status-pill-${compState.includes('compliant') && !compState.includes('non') ? 'green' : compState.includes('non') ? 'red' : 'blue'}`}>
+                                {toText(row['complianceState'] ?? row['status'] ?? '')}
+                              </span>
+                            )}
+                            <div className="mdc-actions">
+                              {Boolean(row['id']) && (
+                                <button className="copy-id-btn" title="Copy ID" onClick={e => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(String(row['id']));
+                                  addToast('success', 'ID copied!');
+                                }}>⧉</button>
+                              )}
+                              <button className="view-json-btn" title="View JSON" onClick={e => { e.stopPropagation(); setJsonModalRow(row); }}>{ '{}'}</button>
+                            </div>
                           </div>
+                          {headers.filter(h => h !== 'id' && h !== 'details' && h !== 'complianceState').slice(0, 3).map(h => (
+                            <div key={h} className="mdc-row">
+                              <span className="mdc-key">{h}</span>
+                              <span className="mdc-val">{toText(row[h])}</span>
+                            </div>
+                          ))}
+                          {isDeviceView && devId && (
+                            <div className="mdc-device-actions">
+                              <button className={`daction-btn daction-sync ${isActing ? 'daction-loading' : ''}`}
+                                disabled={!!actionLoading}
+                                onClick={e => { e.stopPropagation(); openConfirm('sync', row); }}
+                              >{isActing ? '⏳' : '🔄'} Sync</button>
+                              <button className={`daction-btn daction-reboot ${isActing ? 'daction-loading' : ''}`}
+                                disabled={!!actionLoading}
+                                onClick={e => { e.stopPropagation(); openConfirm('reboot', row); }}
+                              >{isActing ? '⏳' : '⚡'} Reboot</button>
+                              <button className={`daction-btn daction-reset ${isActing ? 'daction-loading' : ''}`}
+                                disabled={!!actionLoading}
+                                onClick={e => { e.stopPropagation(); openConfirm('autopilotReset', row); }}
+                              >{isActing ? '⏳' : '♻️'} Reset</button>
+                            </div>
+                          )}
                         </div>
-                        {headers.filter(h => h !== 'id' && h !== 'details').slice(0, 4).map(h => (
-                          <div key={h} className="mdc-row">
-                            <span className="mdc-key">{h}</span>
-                            <span className="mdc-val">{toText(row[h])}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
-                  /* Desktop: enhanced table */
+                  /* Desktop: enhanced table with actions */
                   <div className="table-wrap">
-                    <table className="data-table data-table-enhanced">
-                      <thead>
-                        <tr>
-                          {headers.map((header) => (
-                            <th key={header}>{header}</th>
-                          ))}
-                          <th style={{ width: 72 }}>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredRows.map((row, index) => (
-                          <tr
-                            key={String(row['id'] ?? index)}
-                            className={`table-row ${selectedIndex === index ? 'active' : ''} ${index % 2 === 1 ? 'zebra' : ''}`}
-                            onClick={() => setSelectedIndex(index)}
-                          >
+                    {filteredRows.length === 0 ? (
+                      <div className="empty-state" style={{ padding: '40px 20px' }}>
+                        <div className="empty-state-title">No matching devices</div>
+                        <div>Try a different search term.</div>
+                      </div>
+                    ) : (
+                      <table className="data-table data-table-enhanced">
+                        <thead>
+                          <tr>
+                            {isDeviceView && (
+                              <th style={{ width: 36 }}>
+                                <input type="checkbox"
+                                  checked={selectedDevices.size === filteredRows.length && filteredRows.length > 0}
+                                  onChange={toggleSelectAll}
+                                  title="Select all"
+                                  style={{ cursor: 'pointer', accentColor: 'var(--amber)' }}
+                                />
+                              </th>
+                            )}
                             {headers.map((header) => (
-                              <td key={`${index}-${header}`}>
-                                {header === 'id' || (String(row[header] ?? '').length === 36 && String(row[header] ?? '').includes('-')) ? (
-                                  <span className="guid-cell">
-                                    <span className="guid-text">{toText(row[header])}</span>
-                                    <button className="copy-id-btn" title="Copy ID" onClick={e => {
-                                      e.stopPropagation();
-                                      navigator.clipboard.writeText(toText(row[header]));
-                                      addToast('success', 'ID copied!');
-                                    }}>⧉</button>
-                                  </span>
-                                ) : toText(row[header])}
-                              </td>
+                              <th key={header}>{header.replace(/([A-Z])/g, ' $1').trim()}</th>
                             ))}
-                            <td>
-                              <button className="view-json-btn" title="View raw JSON" onClick={e => {
-                                e.stopPropagation();
-                                setJsonModalRow(row);
-                              }}>{ '{}'}</button>
-                            </td>
+                            <th style={{ width: isDeviceView ? 200 : 72 }}>Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {filteredRows.map((row, index) => {
+                            const devId = getDeviceId(row);
+                            const isSelected = selectedDevices.has(devId);
+                            const isActing = actionLoading === devId;
+                            const compState = String(row['complianceState'] ?? '').toLowerCase();
+                            return (
+                              <tr
+                                key={devId || index}
+                                className={`table-row ${selectedIndex === index ? 'active' : ''} ${index % 2 === 1 ? 'zebra' : ''} ${isSelected ? 'row-selected' : ''}`}
+                                onClick={() => setSelectedIndex(index)}
+                              >
+                                {isDeviceView && (
+                                  <td onClick={e => e.stopPropagation()}>
+                                    {devId && <input type="checkbox" checked={isSelected} onChange={() => toggleDeviceSelect(devId)}
+                                      style={{ cursor: 'pointer', accentColor: 'var(--amber)' }} />}
+                                  </td>
+                                )}
+                                {headers.map((header) => (
+                                  <td key={`${index}-${header}`}>
+                                    {header === 'complianceState' || header === 'status' ? (
+                                      <span className={`status-pill status-pill-${compState.includes('compliant') && !compState.includes('non') ? 'green' : compState.includes('non') ? 'red' : 'blue'}`}>
+                                        {toText(row[header])}
+                                      </span>
+                                    ) : (header === 'id' || (String(row[header] ?? '').length === 36 && String(row[header] ?? '').includes('-'))) ? (
+                                      <span className="guid-cell">
+                                        <span className="guid-text">{toText(row[header])}</span>
+                                        <button className="copy-id-btn" title="Copy ID" onClick={e => {
+                                          e.stopPropagation();
+                                          navigator.clipboard.writeText(toText(row[header]));
+                                          addToast('success', 'ID copied!');
+                                        }}>⧉</button>
+                                      </span>
+                                    ) : toText(row[header])}
+                                  </td>
+                                ))}
+                                <td onClick={e => e.stopPropagation()}>
+                                  <div className="row-actions">
+                                    <button className="view-json-btn" title="View JSON" onClick={() => setJsonModalRow(row)}>{ '{}'}</button>
+                                    {isDeviceView && devId && (<>
+                                      <button className={`daction-btn daction-sync ${isActing ? 'daction-loading' : ''}`}
+                                        disabled={!!actionLoading} title="Sync device"
+                                        onClick={() => openConfirm('sync', row)}>
+                                        {isActing ? '⏳' : '🔄'}
+                                      </button>
+                                      <button className={`daction-btn daction-reboot ${isActing ? 'daction-loading' : ''}`}
+                                        disabled={!!actionLoading} title="Reboot device"
+                                        onClick={() => openConfirm('reboot', row)}>
+                                        {isActing ? '⏳' : '⚡'}
+                                      </button>
+                                      <button className={`daction-btn daction-reset ${isActing ? 'daction-loading' : ''}`}
+                                        disabled={!!actionLoading} title="Autopilot Reset"
+                                        onClick={() => openConfirm('autopilotReset', row)}>
+                                        {isActing ? '⏳' : '♻️'}
+                                      </button>
+                                    </>)}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
                 )}
               </>
@@ -1659,6 +1890,57 @@ export default function App() {
           {toasts.map((toast) => (
             <div key={toast.id} className={`toast ${toast.kind}`}>{toast.message}</div>
           ))}
+        </div>
+      )}
+
+      {/* ── Confirmation Modal ── */}
+      {confirmModal.open && (
+        <div className="confirm-overlay" onClick={() => setConfirmModal(m => ({ ...m, open: false }))}>
+          <div className="confirm-modal" onClick={e => e.stopPropagation()}>
+            <div className="confirm-icon">
+              {confirmModal.action?.includes('reset') ? '⚠️' : confirmModal.action?.includes('reboot') ? '⚡' : '🔄'}
+            </div>
+            <div className="confirm-title">
+              {confirmModal.action === 'sync' && 'Sync Device'}
+              {confirmModal.action === 'reboot' && 'Reboot Device'}
+              {confirmModal.action === 'autopilotReset' && 'Autopilot Reset'}
+              {confirmModal.action === 'bulk-sync' && `Sync ${confirmModal.count} Devices`}
+              {confirmModal.action === 'bulk-reboot' && `Reboot ${confirmModal.count} Devices`}
+              {confirmModal.action === 'bulk-reset' && `Reset ${confirmModal.count} Devices`}
+            </div>
+            <div className="confirm-body">
+              {confirmModal.action === 'autopilotReset' ? (
+                <>
+                  <p>Are you sure you want to <strong>Autopilot Reset</strong> <span className="confirm-device-name">{confirmModal.deviceName}</span>?</p>
+                  <p className="confirm-warning">⚠️ This will wipe the device and re-run Autopilot provisioning. <strong>This action cannot be undone.</strong></p>
+                </>
+              ) : confirmModal.action === 'bulk-reset' ? (
+                <>
+                  <p>Are you sure you want to reset <strong>{confirmModal.count} devices</strong>?</p>
+                  <p className="confirm-warning">⚠️ All selected devices will be wiped. <strong>This action cannot be undone.</strong></p>
+                </>
+              ) : confirmModal.action === 'reboot' ? (
+                <p>Reboot <span className="confirm-device-name">{confirmModal.deviceName}</span>? The device will restart immediately.</p>
+              ) : confirmModal.action === 'bulk-reboot' ? (
+                <p>Reboot <strong>{confirmModal.count} devices</strong>? All selected devices will restart.</p>
+              ) : confirmModal.action === 'bulk-sync' ? (
+                <p>Force policy sync on <strong>{confirmModal.count} devices</strong>?</p>
+              ) : (
+                <p>Force policy sync on <span className="confirm-device-name">{confirmModal.deviceName}</span>?</p>
+              )}
+            </div>
+            <div className="confirm-actions">
+              <button className="btn btn-secondary" onClick={() => setConfirmModal(m => ({ ...m, open: false }))}>Cancel</button>
+              <button
+                className={`btn ${confirmModal.action?.includes('reset') || confirmModal.action?.includes('reboot') ? 'btn-danger' : 'btn-primary'}`}
+                onClick={executeAction}
+              >
+                {confirmModal.action === 'sync' || confirmModal.action === 'bulk-sync' ? '🔄 Confirm Sync'
+                  : confirmModal.action === 'reboot' || confirmModal.action === 'bulk-reboot' ? '⚡ Confirm Reboot'
+                  : '♻️ Confirm Reset'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

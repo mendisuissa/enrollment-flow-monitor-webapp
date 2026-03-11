@@ -939,3 +939,162 @@ html, body {
   .cbr-label { width: 100%; }
   .cbr-count { width: auto; }
 }
+
+/* ── Mobile topbar fixes ────────────────────────────────── */
+@media (max-width: 1024px) {
+  .topbar {
+    padding: 0 10px;
+    height: 52px;
+    gap: 6px;
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+  .topbar::after { display: none; }
+  .topbar-left { gap: 8px; min-width: 0; flex: 1; }
+  .topbar-titles { margin-left: 6px; padding-left: 8px; }
+  .topbar-title { font-size: 12px; }
+  .logo-text { display: none; }
+  .topbar-actions { gap: 5px; flex-shrink: 0; }
+  .topbar-actions .btn { padding: 6px 10px; font-size: 11px; min-height: 36px; }
+  .topbar-actions .search-trigger-btn { padding: 6px 10px; }
+  .topbar-refresh-btn { min-width: 38px; }
+  .user-chip-btn { padding: 4px 6px 4px 4px; }
+  .user-menu-pop { right: 0; left: auto; min-width: 180px; }
+}
+
+/* Welcome screen — mobile grid fix */
+@media (max-width: 600px) {
+  .welcome-features { grid-template-columns: repeat(2, 1fr); }
+  .welcome-screen { padding: 32px 16px 20px; }
+  .welcome-title { font-size: 26px; }
+  .welcome-actions { flex-direction: column; width: 100%; }
+  .welcome-signin-btn, .welcome-tutorial-btn { width: 100%; justify-content: center; }
+}
+
+/* ── Inline Search Bar ──────────────────────────────────── */
+.inline-search-wrap { margin-bottom: 12px; position: sticky; top: 0; z-index: 10; }
+.inline-search-bar {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--navy-light); border: 1.5px solid var(--navy-border);
+  border-radius: 10px; padding: 9px 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.inline-search-bar:focus-within { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(245,158,11,0.15); }
+.inline-search-icon { font-size: 15px; flex-shrink: 0; color: var(--text-muted); }
+.inline-search-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  font-family: 'DM Sans', sans-serif; font-size: 14px; color: var(--text);
+}
+.inline-search-input::placeholder { color: var(--text-dim); }
+.inline-search-clear {
+  background: transparent; border: none; color: var(--text-dim);
+  cursor: pointer; font-size: 14px; padding: 0 4px; transition: color 0.1s;
+}
+.inline-search-clear:hover { color: var(--text); }
+.inline-search-count {
+  font-size: 10px; font-weight: 700; font-family: 'DM Mono', monospace;
+  color: var(--amber); background: var(--amber-dim); padding: 2px 7px; border-radius: 10px; flex-shrink: 0;
+}
+
+/* ── Status Pills ───────────────────────────────────────── */
+.status-pill {
+  display: inline-flex; align-items: center;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 20px; white-space: nowrap; font-family: 'DM Mono', monospace;
+}
+.status-pill-green  { background: rgba(16,185,129,0.15); color: #34D399; border: 1px solid rgba(16,185,129,0.2); }
+.status-pill-red    { background: rgba(239,68,68,0.15);  color: #FCA5A5; border: 1px solid rgba(239,68,68,0.2); }
+.status-pill-blue   { background: rgba(14,165,233,0.15); color: var(--teal); border: 1px solid rgba(14,165,233,0.2); }
+.status-pill-amber  { background: var(--amber-dim);      color: var(--amber); border: 1px solid var(--amber-border); }
+
+/* ── Device Action Buttons ──────────────────────────────── */
+.row-actions { display: flex; align-items: center; gap: 4px; }
+.daction-btn {
+  border: none; cursor: pointer; border-radius: 6px;
+  font-size: 11px; font-weight: 700; padding: 4px 8px; min-height: 28px;
+  transition: all 0.12s; font-family: 'DM Sans', sans-serif;
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.daction-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.daction-loading { opacity: 0.7; }
+.daction-sync   { background: rgba(14,165,233,0.15);  color: var(--teal);   border: 1px solid rgba(14,165,233,0.25); }
+.daction-sync:hover:not(:disabled)  { background: rgba(14,165,233,0.28); }
+.daction-reboot { background: rgba(245,158,11,0.13);  color: var(--amber);  border: 1px solid var(--amber-border); }
+.daction-reboot:hover:not(:disabled){ background: rgba(245,158,11,0.25); }
+.daction-reset  { background: rgba(239,68,68,0.12);   color: #FCA5A5;       border: 1px solid rgba(239,68,68,0.22); }
+.daction-reset:hover:not(:disabled) { background: rgba(239,68,68,0.22); }
+
+.mdc-device-actions { display: flex; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--navy-border); }
+.mdc-device-actions .daction-btn { flex: 1; justify-content: center; min-height: 36px; font-size: 12px; }
+
+.mdc-checkbox { width: 16px; height: 16px; cursor: pointer; accentColor: var(--amber); flex-shrink: 0; }
+.mdc-selected { border-color: var(--amber-border) !important; background: var(--amber-dim) !important; }
+.row-selected td { background: rgba(245,158,11,0.06) !important; }
+
+/* ── Bulk Action Floating Bar ───────────────────────────── */
+.bulk-action-bar {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  background: var(--navy-light); border: 1.5px solid var(--amber-border);
+  border-radius: 10px; padding: 10px 14px; margin-bottom: 10px;
+  box-shadow: 0 4px 20px rgba(245,158,11,0.15);
+  animation: slideDown 0.15s ease;
+}
+@keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.bulk-count { font-size: 12px; font-weight: 800; color: var(--amber); font-family: 'DM Mono', monospace; }
+.bulk-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.bulk-btn {
+  font-size: 11px; font-weight: 700; padding: 6px 12px; min-height: 34px;
+  border-radius: 8px; border: 1px solid; cursor: pointer; font-family: 'DM Sans', sans-serif;
+  transition: all 0.12s; display: inline-flex; align-items: center; gap: 4px;
+}
+.bulk-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.bulk-btn-sync   { background: rgba(14,165,233,0.13); color: var(--teal);  border-color: rgba(14,165,233,0.3); }
+.bulk-btn-sync:hover:not(:disabled)  { background: rgba(14,165,233,0.25); }
+.bulk-btn-reboot { background: var(--amber-dim);      color: var(--amber); border-color: var(--amber-border); }
+.bulk-btn-reboot:hover:not(:disabled){ background: rgba(245,158,11,0.25); }
+.bulk-btn-reset  { background: rgba(239,68,68,0.12);  color: #FCA5A5;      border-color: rgba(239,68,68,0.3); }
+.bulk-btn-reset:hover:not(:disabled) { background: rgba(239,68,68,0.22); }
+.bulk-btn-clear  { background: transparent; color: var(--text-dim); border-color: var(--navy-border); }
+.bulk-btn-clear:hover { color: var(--text); border-color: var(--text-dim); }
+
+/* ── Confirmation Modal ─────────────────────────────────── */
+.confirm-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(6px); z-index: 400;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; animation: fadeIn 0.15s ease;
+}
+.confirm-modal {
+  background: var(--navy-mid); border: 1px solid var(--navy-border);
+  border-radius: 16px; max-width: 440px; width: 100%;
+  padding: 28px 28px 24px; box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+  display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center;
+  animation: slideUp 0.18s ease;
+}
+.confirm-icon { font-size: 36px; line-height: 1; }
+.confirm-title { font-size: 18px; font-weight: 800; color: var(--text); }
+.confirm-body { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+.confirm-body p { margin: 0 0 6px; }
+.confirm-device-name { font-weight: 700; color: var(--text); font-family: 'DM Mono', monospace; font-size: 12px; }
+.confirm-warning { color: #FCA5A5 !important; font-size: 12px !important; }
+.confirm-actions { display: flex; gap: 10px; margin-top: 4px; width: 100%; }
+.confirm-actions .btn { flex: 1; justify-content: center; min-height: 42px; font-size: 13px; }
+
+/* ── Additional color vars for new features ─────────────── */
+:root, [data-theme="dark"] {
+  --green-dim: rgba(16,185,129,0.12);
+  --red-dim: rgba(239,68,68,0.12);
+  --teal-dim: rgba(14,165,233,0.12);
+}
+
+/* ── Mobile fixes for new features ─────────────────────── */
+@media (max-width: 1024px) {
+  .inline-search-wrap { top: 52px; margin: 0 0 10px; }
+  .inline-search-bar { border-radius: 8px; padding: 10px 12px; }
+  .inline-search-input { font-size: 16px; } /* prevent iOS zoom */
+  .bulk-action-bar { flex-direction: column; align-items: flex-start; }
+  .bulk-actions { width: 100%; }
+  .bulk-btn { flex: 1; justify-content: center; min-height: 44px; }
+  .confirm-modal { padding: 24px 20px 20px; }
+}
