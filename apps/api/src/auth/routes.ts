@@ -63,6 +63,10 @@ authRouter.get('/me', (req: any, res) => {
  * IMPORTANT: disable this endpoint in production if you don't want it exposed.
  */
 authRouter.get('/debug/token', (req: any, res) => {
+  if (config.nodeEnv === 'production') {
+    return res.status(404).json({ message: 'Not found' });
+  }
+
   const accessToken: string | undefined = req.session?.accessToken;
 
   if (!accessToken) {

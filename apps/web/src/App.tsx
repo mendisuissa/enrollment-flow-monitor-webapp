@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { ViewName } from '@efm/shared';
 type ExtendedViewName = ViewName | 'permissionCheck' | 'enrollmentErrorCatalog' | 'reports' | 'readinessChecklist' | 'auditLogs' | 'privacy';
-import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction } from './api/client.js';
+import { api, buildExportUrl, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
 type Row = Record<string, unknown>;
@@ -326,7 +326,7 @@ export default function App() {
   }
 
   function onExport(format: 'json' | 'csv') {
-    window.open(`/api/export?view=${currentView}&format=${format}`, '_blank');
+    window.open(buildExportUrl(currentView, format), '_blank', 'noopener,noreferrer');
   }
 
   async function runGraphQuery() {

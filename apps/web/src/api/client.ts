@@ -57,3 +57,9 @@ export async function deviceBulkAction(deviceIds: string[], action: 'sync' | 're
   const response = await api.post('/devices/bulk', { deviceIds, action });
   return response.data as { success: boolean; results: Array<{ id: string; ok: boolean; error?: string }> };
 }
+
+
+export function buildExportUrl(view: string, format: 'json' | 'csv'): string {
+  const normalizedBase = apiBaseUrl || '/api';
+  return `${normalizedBase}/export?view=${encodeURIComponent(view)}&format=${encodeURIComponent(format)}`;
+}

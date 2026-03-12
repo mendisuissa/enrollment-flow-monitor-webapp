@@ -126,7 +126,7 @@ app.get('/api/diag', (req, res) => {
     },
     sessionCookiePolicy: {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: isProduction ? 'none' : 'lax',
       secure: isProduction
     },
     runtime: {
@@ -172,9 +172,17 @@ if (isProduction) {
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error({ err }, 'Unhandled API error');
   if (err instanceof Error) {
-    res.status(500).json({ message: err.message, stack: err.stack });
+    res.status(500).json(
+      isProduction
+        ? { message: err.message || 'Unexpected server error' }
+        : { message: err.message, stack: err.stack }
+    );
   } else {
-    res.status(500).json({ message: 'Unexpected server error', error: err });
+    res.status(500).json(
+      isProduction
+        ? { message: 'Unexpected server error' }
+        : { message: 'Unexpected server error', error: err }
+    );
   }
 });
 

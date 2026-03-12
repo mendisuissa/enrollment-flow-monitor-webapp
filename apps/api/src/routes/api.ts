@@ -170,10 +170,10 @@ function buildOcrGrid(data: Awaited<ReturnType<typeof getViewData>>) {
     }];
 }
 
-function buildPermissionCheck() {
+function buildPermissionCheck(req: Request) {
   return [{
     id: 'permission-check',
-    connected: Boolean(config.mockMode || true),
+    connected: Boolean(config.mockMode || req.session?.accessToken),
     mockMode: config.mockMode,
     configuredScopes: (config.entra?.scopes ?? []).join(' '),
     recommendedScopes: 'openid profile offline_access User.Read User.ReadBasic.All DeviceManagementManagedDevices.Read.All DeviceManagementApps.Read.All',
@@ -443,7 +443,7 @@ apiRouter.get('/view/:view', async (req, res) => {
     }
 
     // Extended views used by the UI
-    if (String(req.params.view) === 'permissionCheck') return res.json({ rows: buildPermissionCheck(), message: 'Permission check loaded.' });
+    if (String(req.params.view) === 'permissionCheck') return res.json({ rows: buildPermissionCheck(req), message: 'Permission check loaded.' });
     if (String(req.params.view) === 'enrollmentErrorCatalog') return res.json({ rows: buildEnrollmentErrorCatalog(), message: 'Enrollment Error Catalog loaded.' });
     if (String(req.params.view) === 'reports') return res.json({ rows: [buildReportData(data, req.session?.account?.username ?? '')], message: 'Reports loaded.' });
     if (String(req.params.view) === 'readinessChecklist') {
