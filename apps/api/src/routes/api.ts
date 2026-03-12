@@ -397,11 +397,43 @@ apiRouter.get('/refresh', async (req, res) => {
 apiRouter.get('/view/:view', async (req, res) => {
   try {
     const view = String(req.params.view) as ViewName;
+
+    if (view === 'permissionCheck') {
+      return res.json({
+        rows: buildPermissionCheck(req),
+        message: 'Permission check loaded.'
+      });
+    }
+
+    if (view === 'settings') {
+      const settings: SettingsData = {
+        incidentWindowMinutes: config.incidentWindowMinutes,
+        incidentThresholdCount: config.incidentThresholdCount,
+        severityThresholds: config.severityThresholds,
+        refreshIntervalSeconds: config.refreshIntervalSeconds,
+        mockMode: config.mockMode
+      };
+      return res.json({ rows: [settings], message: 'Settings loaded.' });
+    }
+
+    if (view === 'enrollmentErrorCatalog') {
+      return res.json({
+        rows: buildEnrollmentErrorCatalog(),
+        message: 'Enrollment Error Catalog loaded.'
+      });
+    }
+
     const data = await getViewData(req.session.accessToken);
 
-    if (view === 'dashboard') return res.json({ rows: [buildDashboard(data)], message: 'Dashboard loaded.' });
-    if (view === 'windowsEnrollment') return res.json({ rows: buildWindowsEnrollmentGrid(data), message: 'Windows Enrollment loaded.' });
-    if (view === 'linuxEnrollment') return res.json({ rows: buildLinuxEnrollmentGrid(data), message: 'Linux Enrollment loaded.' });
+    if (view === 'dashboard') {
+      return res.json({ rows: [buildDashboard(data)], message: 'Dashboard loaded.' });
+    }
+    if (view === 'windowsEnrollment') {
+      return res.json({ rows: buildWindowsEnrollmentGrid(data), message: 'Windows Enrollment loaded.' });
+    }
+    if (view === 'linuxEnrollment') {
+      return res.json({ rows: buildLinuxEnrollmentGrid(data), message: 'Linux Enrollment loaded.' });
+    }
     if (view === 'mobileEnrollment') {
       const mobileRows = data.devices
         .filter((d) => {
@@ -417,7 +449,11 @@ apiRouter.get('/view/:view', async (req, res) => {
           lastSyncDateTime: d.lastSyncDateTime,
           userDisplayName: d.userDisplayName,
           userPrincipalName: d.userPrincipalName,
-          details: `Device: ${d.deviceName}\nOS: ${d.operatingSystem} ${d.osVersion}\nCompliance: ${d.complianceState}\nUPN: ${d.userPrincipalName || '-'}\nLast Sync: ${d.lastSyncDateTime}`
+          details: `Device: ${d.deviceName}
+OS: ${d.operatingSystem} ${d.osVersion}
+Compliance: ${d.complianceState}
+UPN: ${d.userPrincipalName || '-'}
+Last Sync: ${d.lastSyncDateTime}`
         }));
       return res.json({ rows: mobileRows, message: 'Mobile Enrollment loaded.' });
     }
@@ -438,7 +474,13 @@ apiRouter.get('/view/:view', async (req, res) => {
             lastSyncDateTime: d.lastSyncDateTime,
             userPrincipalName: d.userPrincipalName || '-',
             serialNumber: d.serialNumber || '-',
-            details: `Device: ${d.deviceName}\nOS: macOS ${d.osVersion}\nEnrollment: ${isADE ? 'ADE / DEP (Supervised)' : 'User Enrollment'}\nCompliance: ${d.complianceState}\nUPN: ${d.userPrincipalName || '-'}\nSerial: ${d.serialNumber || '-'}\nLast Sync: ${d.lastSyncDateTime}`
+            details: `Device: ${d.deviceName}
+OS: macOS ${d.osVersion}
+Enrollment: ${isADE ? 'ADE / DEP (Supervised)' : 'User Enrollment'}
+Compliance: ${d.complianceState}
+UPN: ${d.userPrincipalName || '-'}
+Serial: ${d.serialNumber || '-'}
+Last Sync: ${d.lastSyncDateTime}`
           };
         });
       const msg = macRows.length === 0
@@ -446,27 +488,30 @@ apiRouter.get('/view/:view', async (req, res) => {
         : `macOS Enrollment loaded — ${macRows.length} device${macRows.length !== 1 ? 's' : ''}.`;
       return res.json({ rows: macRows, message: msg });
     }
-    if (view === 'ocr') return res.json({ rows: buildOcrGrid(data), message: 'OCR loaded.' });
-    if (view === 'incidents') return res.json({ rows: data.incidents, message: data.incidents[0]?.isPlaceholder ? 'No active incidents in current window.' : 'Incidents loaded.' });
-
-    if (view === 'settings') {
-      const settings: SettingsData = {
-        incidentWindowMinutes: config.incidentWindowMinutes,
-        incidentThresholdCount: config.incidentThresholdCount,
-        severityThresholds: config.severityThresholds,
-        refreshIntervalSeconds: config.refreshIntervalSeconds,
-        mockMode: config.mockMode
-      };
-      return res.json({ rows: [settings], message: 'Settings loaded.' });
+    if (view === 'ocr') {
+      return res.json({ rows: buildOcrGrid(data), message: 'OCR loaded.' });
     }
-
-    // Extended views used by the UI
-    if (String(req.params.view) === 'permissionCheck') return res.json({ rows: buildPermissionCheck(req), message: 'Permission check loaded.' });
-    if (String(req.params.view) === 'enrollmentErrorCatalog') return res.json({ rows: buildEnrollmentErrorCatalog(), message: 'Enrollment Error Catalog loaded.' });
-    if (String(req.params.view) === 'reports') return res.json({ rows: [buildReportData(data, req.session?.account?.username ?? '')], message: 'Reports loaded.' });
-    if (String(req.params.view) === 'readinessChecklist') {
+    if (view === 'incidents') {
+      return res.json({
+        rows: data.incidents,
+        message: data.incidents[0]?.isPlaceholder ? 'No active incidents in current window.' : 'Incidents loaded.'
+      });
+    }
+    if (view === 'reports') {
+      return res.json({
+        rows: [buildReportData(data, req.session?.account?.username ?? '')],
+        message: 'Reports loaded.'
+      });
+    }
+    if (view === 'readinessChecklist') {
       const scenario = (typeof req.query.scenario === 'string' ? req.query.scenario : 'autopilot') as ChecklistScenario;
-      return res.json({ rows: buildChecklist(data, scenario), message: `Readiness checklist for ${scenario} loaded.` });
+      return res.json({
+        rows: buildChecklist(data, scenario),
+        message: `Readiness checklist for ${scenario} loaded.`
+      });
+    }
+    if (String(req.params.view) === 'auditLogs') {
+      return res.json({ rows: [], message: 'Audit Logs loaded.' });
     }
 
     return res.status(400).json({ message: `Unsupported view: ${req.params.view}` });
@@ -476,203 +521,3 @@ apiRouter.get('/view/:view', async (req, res) => {
   }
 });
 
-apiRouter.post('/runbook', async (req, res) => {
-  const row = req.body as { installState?: string; recommendedActions?: string[] } | undefined;
-  const actions = Array.isArray(row?.recommendedActions) ? row!.recommendedActions : [];
-
-  if ((row?.installState ?? '').toLowerCase().includes('fail') && actions.length > 0) {
-    const runbook = actions.map((a, i) => `${i + 1}. ${a}`).join('\n');
-    return res.json({ runbook });
-  }
-
-  return res.json({
-    runbook:
-      '1. Validate user licensing and MDM scope.\n' +
-      '2. Re-check network/proxy/TLS path.\n' +
-      '3. Inspect Intune + Entra logs around the timestamp.'
-  });
-});
-
-apiRouter.get('/logs', async (_req, res) => {
-  try {
-    const raw = await fs.readFile(config.logFile, 'utf8');
-    const lines = raw.split('\n').filter(Boolean);
-    res.json({ rows: lines.slice(-200).map((line, index) => ({ id: String(index), line })), message: 'Log tail loaded.' });
-  } catch {
-    res.json({ rows: [{ id: '0', line: 'No logs found yet.' }], message: 'Logs unavailable.' });
-  }
-});
-
-apiRouter.get('/logs/download', async (_req, res) => {
-  try {
-    const raw = await fs.readFile(config.logFile, 'utf8');
-    res.setHeader('Content-Type', 'text/plain');
-    res.setHeader('Content-Disposition', 'attachment; filename=app.log');
-    res.send(raw);
-  } catch {
-    res.status(404).send('No logs available.');
-  }
-});
-
-// ── OCR / AI Explanation ──────────────────────────────────
-apiRouter.post('/ocr/explain', async (req, res) => {
-  const { text } = req.body as { text?: string };
-  if (!text?.trim()) {
-    return res.status(400).json({
-      category: 'Unknown', confidence: 0,
-      cause: 'No text provided.',
-      recommendedActions: ['Paste an error message and try again.']
-    });
-  }
-
-  const lowerText = text.toLowerCase();
-
-  // Match against local catalog using errorCode or title keywords
-  const catalogMatch = enrollmentErrorCatalog.find(entry =>
-    lowerText.includes(entry.errorCode.toLowerCase()) ||
-    lowerText.includes(entry.title.toLowerCase().slice(0, 20))
-  );
-
-  if (catalogMatch) {
-    // Split remediation string into numbered steps
-    const remediationSteps = catalogMatch.remediation
-      .split(/\.\s+(?=[A-Z0-9])/)
-      .map(s => s.trim().replace(/\.$/, ''))
-      .filter(s => s.length > 10);
-
-    return res.json({
-      category: catalogMatch.area,
-      confidence: 0.95,
-      cause: catalogMatch.likelyRootCause,
-      recommendedActions: remediationSteps.length > 0
-        ? remediationSteps
-        : [catalogMatch.remediation]
-    });
-  }
-
-  // Fallback: extract error code / correlation ID from raw text
-  const errorCodeMatch = text.match(/0x[0-9A-Fa-f]{6,8}|80[0-9A-Fa-f]{6}/);
-  const correlationMatch = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-
-  const actions: string[] = [
-    'Search https://learn.microsoft.com/en-us/mem/intune for this error code.',
-    'Check Intune portal → Devices → Monitor → Enrollment failures.',
-    'Review Azure AD Sign-in logs around the failure timestamp.',
-    'Verify the user has a valid Intune license and is in MDM scope.',
-    'Ensure Intune and Azure AD endpoints are reachable (no proxy/firewall block).'
-  ];
-
-  if (correlationMatch) {
-    actions.push(`Use Correlation ID ${correlationMatch[0]} in Azure AD audit logs for an exact trace.`);
-  }
-
-  return res.json({
-    category: errorCodeMatch ? 'EnrollmentError' : 'Unknown',
-    confidence: errorCodeMatch ? 0.5 : 0.1,
-    cause: errorCodeMatch
-      ? `Error code ${errorCodeMatch[0]} detected. Not found in local catalog — manual lookup required.`
-      : 'No specific error code detected in the provided text.',
-    recommendedActions: actions
-  });
-});
-
-
-// ── Device Remediation Actions ────────────────────────────
-// These routes MUST use the write token (from GRAPH_SCOPES_WRITE elevated login).
-// If writeAccessToken is missing, the user has not yet consented to write permissions.
-function getWriteToken(req: any): string | null {
-  return req.session?.writeAccessToken ?? null;
-}
-
-function requireWriteToken(req: any, res: any): string | null {
-  const token = getWriteToken(req);
-  if (!token) {
-    res.status(403).json({
-      success: false,
-      code: 'WRITE_PERMISSIONS_REQUIRED',
-      message: 'This action requires elevated permissions. Please authorize via the Upgrade Access flow.'
-    });
-    return null;
-  }
-  return token;
-}
-
-apiRouter.post('/devices/:id/sync', async (req, res) => {
-  try {
-    const token = requireWriteToken(req, res);
-    if (!token) return;
-    const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/syncDevice`, {
-      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
-    });
-    if (!graphRes.ok && graphRes.status !== 204) {
-      const body = await graphRes.text().catch(() => '');
-      res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
-      return;
-    }
-    res.json({ success: true, message: 'Sync command sent.' });
-  } catch (e: any) {
-    res.status(500).json({ success: false, message: e?.message ?? 'Sync failed.' });
-  }
-});
-
-apiRouter.post('/devices/:id/reboot', async (req, res) => {
-  try {
-    const token = requireWriteToken(req, res);
-    if (!token) return;
-    const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/rebootNow`, {
-      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
-    });
-    if (!graphRes.ok && graphRes.status !== 204) {
-      const body = await graphRes.text().catch(() => '');
-      res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
-      return;
-    }
-    res.json({ success: true, message: 'Reboot command sent.' });
-  } catch (e: any) {
-    res.status(500).json({ success: false, message: e?.message ?? 'Reboot failed.' });
-  }
-});
-
-apiRouter.post('/devices/:id/autopilotReset', async (req, res) => {
-  try {
-    const token = requireWriteToken(req, res);
-    if (!token) return;
-    const graphRes = await fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${req.params.id}/windowsAutopilotReset`, {
-      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
-    });
-    if (!graphRes.ok && graphRes.status !== 204) {
-      const body = await graphRes.text().catch(() => '');
-      res.status(graphRes.status).json({ success: false, message: `Graph error ${graphRes.status}: ${body}` });
-      return;
-    }
-    res.json({ success: true, message: 'Autopilot Reset command sent.' });
-  } catch (e: any) {
-    res.status(500).json({ success: false, message: e?.message ?? 'Autopilot Reset failed.' });
-  }
-});
-
-apiRouter.post('/devices/bulk', async (req, res) => {
-  const { deviceIds, action } = req.body as { deviceIds: string[]; action: 'sync' | 'reboot' | 'autopilotReset' };
-  if (!Array.isArray(deviceIds) || !action) {
-    res.status(400).json({ success: false, message: 'Missing deviceIds or action.' });
-    return;
-  }
-  const token = requireWriteToken(req, res);
-  if (!token) return;
-
-  const actionMap: Record<string, string> = {
-    sync: 'syncDevice', reboot: 'rebootNow', autopilotReset: 'windowsAutopilotReset'
-  };
-  const results = await Promise.allSettled(
-    deviceIds.map(id =>
-      fetch(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${id}/${actionMap[action]}`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }
-      }).then(r => ({ id, ok: r.ok || r.status === 204 }))
-        .catch((e: any) => ({ id, ok: false, error: e?.message ?? 'Failed' }))
-    )
-  );
-  const mapped = results.map(r => r.status === 'fulfilled' ? r.value : { id: '', ok: false, error: 'Promise rejected' });
-  res.json({ success: true, results: mapped });
-});
-
-export default apiRouter;
