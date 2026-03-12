@@ -4,6 +4,7 @@ export type ViewName =
   | 'autopilotUserDriven'
   | 'autopilotPreProvisioning'
   | 'windowsEnrollment'
+  | 'linuxEnrollment'
   | 'mobileEnrollment'
   | 'macEnrollment'
   | 'ocr'
@@ -99,6 +100,7 @@ export interface IncidentRow {
 export interface DashboardData {
   totalDevices: number;
   windowsEnrollmentDevices: number;
+  linuxEnrollmentDevices: number;
   autopilotUserDrivenDevices: number;
   autopilotAutomaticDevices: number;
   mobileEnrollmentDevices: number;

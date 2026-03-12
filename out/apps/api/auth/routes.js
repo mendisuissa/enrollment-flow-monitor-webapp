@@ -20,6 +20,13 @@ function decodeTokenScopes(token) {
         return [];
     }
 }
+function devOnly(_req, res, next) {
+    if (config.nodeEnv === 'production') {
+        res.status(404).json({ message: 'Not found.' });
+        return;
+    }
+    next();
+}
 authRouter.get('/status', (req, res) => {
     if (!req.session?.account || !req.session?.accessToken) {
         return res.json({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
@@ -29,7 +36,7 @@ authRouter.get('/status', (req, res) => {
         'DeviceManagementManagedDevices.PrivilegedOperations.All',
         'DeviceManagementManagedDevices.ReadWrite.All'
     ];
-    const hasWritePermissions = writeScopes.some(s => scopes.includes(s)) || req.session?.hasWritePermissions === true;
+    const hasWritePermissions = writeScopes.some((s) => scopes.includes(s)) || req.session?.hasWritePermissions === true;
     return res.json({
         connected: true,
         upn: req.session.account.username ?? '',
@@ -38,10 +45,6 @@ authRouter.get('/status', (req, res) => {
         hasWritePermissions
     });
 });
-/**
- * NEW: /api/auth/me
- * Use this to verify session state quickly from browser.
- */
 authRouter.get('/me', (req, res) => {
     if (!req.session?.account) {
         return res.status(401).json({ connected: false });
@@ -51,12 +54,7 @@ authRouter.get('/me', (req, res) => {
         account: req.session.account ?? null
     });
 });
-/**
- * NEW: /api/auth/debug/token
- * Decodes JWT payload and returns scopes/roles for troubleshooting.
- * IMPORTANT: disable this endpoint in production if you don't want it exposed.
- */
-authRouter.get('/debug/token', (req, res) => {
+authRouter.get('/debug/token', devOnly, (req, res) => {
     const accessToken = req.session?.accessToken;
     if (!accessToken) {
         return res.status(401).json({
@@ -69,7 +67,7 @@ authRouter.get('/debug/token', (req, res) => {
         return res.status(400).json({
             connected: true,
             message: 'Token does not look like a JWT',
-            tokenPreview: accessToken.substring(0, 40) + '...'
+            tokenPreview: `${accessToken.substring(0, 40)}...`
         });
     }
     let payload = null;
@@ -82,8 +80,7 @@ authRouter.get('/debug/token', (req, res) => {
     return res.json({
         connected: true,
         user: req.session?.account ?? null,
-        tokenPreview: accessToken.substring(0, 40) + '...',
-        // Delegated scopes usually appear as scp. App permissions appear as roles.
+        tokenPreview: `${accessToken.substring(0, 40)}...`,
         scopes: payload?.scp ?? null,
         roles: payload?.roles ?? null,
         tenantId: payload?.tid ?? null,
@@ -95,18 +92,21 @@ authRouter.get('/debug/token', (req, res) => {
 authRouter.get('/login', async (req, res) => {
     try {
         const origin = getRequestOrigin(req);
-        const redirectUri = `${origin}/api/auth/callback`;
+        const redirectUri = config.entra.redirectUri !== 'http://localhost:4000/api/auth/callback'
+            ? config.entra.redirectUri
+            : `${origin}/api/auth/callback`;
         const elevated = req.query.elevated === 'true';
         req.session.authRedirectUri = redirectUri;
-        req.session.authReturnUrl = origin;
-        req.session.authElevated = elevated; // store flag for callback
+        req.session.authReturnUrl = config.webAppUrl !== 'http://localhost:5173'
+            ? config.webAppUrl
+            : origin;
+        req.session.authElevated = elevated;
         const msal = getMsalApp();
-        // Use GRAPH_SCOPES_READ for normal login, GRAPH_SCOPES_WRITE for elevated
         const scopes = elevated ? config.entra.scopesWrite : config.entra.scopes;
         const authCodeUrl = await msal.getAuthCodeUrl({
             scopes,
             redirectUri,
-            prompt: elevated ? 'consent' : undefined // force consent screen for write upgrade
+            prompt: elevated ? 'consent' : undefined
         });
         res.redirect(authCodeUrl);
     }
@@ -121,27 +121,32 @@ authRouter.get('/callback', async (req, res) => {
     }
     try {
         const redirectUri = req.session.authRedirectUri ?? config.entra.redirectUri;
+        const returnUrl = req.session.authReturnUrl ?? config.webAppUrl;
         const isElevated = req.session.authElevated === true;
         const msal = getMsalApp();
-        // CRITICAL: acquireTokenByCode must use the SAME scopes that were requested in getAuthCodeUrl
         const scopes = isElevated ? config.entra.scopesWrite : config.entra.scopes;
         const tokenResponse = await msal.acquireTokenByCode({ code, scopes, redirectUri });
-        req.session.accessToken = tokenResponse?.accessToken;
-        req.session.account = {
-            username: tokenResponse?.account?.username,
-            tenantId: tokenResponse?.tenantId,
-            name: tokenResponse?.account?.name
-        };
-        // If elevated flow — also store the write token separately
         if (isElevated) {
             req.session.writeAccessToken = tokenResponse?.accessToken;
             req.session.hasWritePermissions = true;
+            req.session.account = {
+                username: tokenResponse?.account?.username ?? req.session.account?.username,
+                tenantId: tokenResponse?.tenantId ?? req.session.account?.tenantId,
+                name: tokenResponse?.account?.name ?? req.session.account?.name
+            };
         }
-        // Clean up temporary session flags
+        else {
+            req.session.accessToken = tokenResponse?.accessToken;
+            req.session.account = {
+                username: tokenResponse?.account?.username,
+                tenantId: tokenResponse?.tenantId,
+                name: tokenResponse?.account?.name
+            };
+        }
         req.session.authElevated = undefined;
         req.session.authRedirectUri = undefined;
         req.session.authReturnUrl = undefined;
-        res.redirect(req.session.authReturnUrl ?? config.webAppUrl);
+        res.redirect(returnUrl);
     }
     catch (error) {
         res.status(500).send(error instanceof Error ? error.message : 'Auth callback failed');

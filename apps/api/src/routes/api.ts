@@ -51,6 +51,7 @@ async function getViewData(accessToken?: string) {
 
 function buildDashboard(data: Awaited<ReturnType<typeof getViewData>>): DashboardData {
   const windowsDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('windows'));
+  const linuxDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('linux'));
 
   const mobileDevices = data.devices.filter((d) => {
     const os = (d.operatingSystem ?? '').toLowerCase();
@@ -72,6 +73,7 @@ function buildDashboard(data: Awaited<ReturnType<typeof getViewData>>): Dashboar
   return {
     totalDevices: data.devices.length,
     windowsEnrollmentDevices: windowsDevices.length,
+    linuxEnrollmentDevices: linuxDevices.length,
     autopilotUserDrivenDevices: userDriven.length,
     autopilotAutomaticDevices: automatic.length,
     mobileEnrollmentDevices: mobileDevices.length,
@@ -86,7 +88,9 @@ function buildDashboard(data: Awaited<ReturnType<typeof getViewData>>): Dashboar
 }
 
 function buildWindowsEnrollmentGrid(data: Awaited<ReturnType<typeof getViewData>>) {
-  return data.devices.map((device) => ({
+  return data.devices
+    .filter((device) => (device.operatingSystem ?? '').toLowerCase().includes('windows'))
+    .map((device) => ({
     id: device.id,
     deviceName: device.deviceName,
     operatingSystem: device.operatingSystem,
@@ -95,7 +99,22 @@ function buildWindowsEnrollmentGrid(data: Awaited<ReturnType<typeof getViewData>
     lastSyncDateTime: device.lastSyncDateTime,
     userPrincipalName: device.userPrincipalName,
     details: `Device: ${device.deviceName}\nOS: ${device.operatingSystem} ${device.osVersion}\nCompliance: ${device.complianceState}\nLast Sync: ${device.lastSyncDateTime}`
-  }));
+    }));
+}
+
+function buildLinuxEnrollmentGrid(data: Awaited<ReturnType<typeof getViewData>>) {
+  return data.devices
+    .filter((device) => (device.operatingSystem ?? '').toLowerCase().includes('linux'))
+    .map((device) => ({
+      id: device.id,
+      deviceName: device.deviceName,
+      operatingSystem: device.operatingSystem,
+      osVersion: device.osVersion,
+      complianceState: device.complianceState,
+      lastSyncDateTime: device.lastSyncDateTime,
+      userPrincipalName: device.userPrincipalName,
+      details: `Device: ${device.deviceName}\nOS: ${device.operatingSystem} ${device.osVersion}\nCompliance: ${device.complianceState}\nLast Sync: ${device.lastSyncDateTime}`
+    }));
 }
 
 function buildAutopilotAllGrid(data: Awaited<ReturnType<typeof getViewData>>) {
@@ -171,16 +190,17 @@ function buildOcrGrid(data: Awaited<ReturnType<typeof getViewData>>) {
 }
 
 function buildPermissionCheck(req: Request) {
+  const token = req.session?.accessToken;
   return [{
     id: 'permission-check',
-    connected: Boolean(config.mockMode || req.session?.accessToken),
+    connected: Boolean(token),
     mockMode: config.mockMode,
     configuredScopes: (config.entra?.scopes ?? []).join(' '),
-    recommendedScopes: 'openid profile offline_access User.Read User.ReadBasic.All DeviceManagementManagedDevices.Read.All DeviceManagementApps.Read.All',
+    recommendedScopes: 'openid profile offline_access User.Read Directory.Read.All DeviceManagementManagedDevices.Read.All DeviceManagementApps.Read.All DeviceManagementServiceConfig.Read.All',
     details:
       `Configured scopes:\n${(config.entra?.scopes ?? []).join(' ')}\n\n` +
       `Recommended (Intune enrollment + app status):\n` +
-      `DeviceManagementManagedDevices.Read.All\nDeviceManagementApps.Read.All\nUser.ReadBasic.All\n\n` +
+      `DeviceManagementManagedDevices.Read.All\nDeviceManagementApps.Read.All\nDeviceManagementServiceConfig.Read.All\nDirectory.Read.All\n\n` +
       `Remember: delegated permissions require admin consent in Entra ID.`
   }];
 }
@@ -380,10 +400,8 @@ apiRouter.get('/view/:view', async (req, res) => {
     const data = await getViewData(req.session.accessToken);
 
     if (view === 'dashboard') return res.json({ rows: [buildDashboard(data)], message: 'Dashboard loaded.' });
-    if (view === 'windowsAutopilot') return res.json({ rows: buildAutopilotAllGrid(data), message: 'Device Preparation (All) loaded.' });
-    if (view === 'autopilotUserDriven') return res.json({ rows: buildAutopilotUserDrivenGrid(data), message: 'Device Preparation - User-Driven loaded.' });
-    if (view === 'autopilotPreProvisioning') return res.json({ rows: buildAutopilotPreProvisioningGrid(data), message: 'Device Preparation - Automatic loaded.' });
     if (view === 'windowsEnrollment') return res.json({ rows: buildWindowsEnrollmentGrid(data), message: 'Windows Enrollment loaded.' });
+    if (view === 'linuxEnrollment') return res.json({ rows: buildLinuxEnrollmentGrid(data), message: 'Linux Enrollment loaded.' });
     if (view === 'mobileEnrollment') {
       const mobileRows = data.devices
         .filter((d) => {

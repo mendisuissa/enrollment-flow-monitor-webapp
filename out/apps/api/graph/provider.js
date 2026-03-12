@@ -4,7 +4,7 @@ import { config } from '../config.js';
 import { asString, safeDate } from '../utils/safe.js';
 import { graphList, graphRequest } from './graphClient.js';
 async function loadFixture(name) {
-    const fixturePath = path.resolve(process.cwd(), 'fixtures', name);
+    const fixturePath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../fixtures', name);
     const raw = await fs.readFile(fixturePath, 'utf8');
     const data = JSON.parse(raw);
     return Array.isArray(data) ? data : [];
@@ -76,9 +76,10 @@ async function safeGraphList(accessToken, url) {
         return await graphList(accessToken, url);
     }
     catch (err) {
-        // IMPORTANT: do not crash the whole dashboard on expected tenant/scope/endpoint limitations
-        if (isExpectedGraphTenantError(err))
-            return [];
+        const msg = String(err?.message ?? err);
+        if (isExpectedGraphTenantError(err)) {
+            throw new Error(`GRAPH_EXPECTED_ERROR on ${url}: ${msg}`);
+        }
         throw err;
     }
 }
@@ -122,9 +123,21 @@ async function getGraphUsers(accessToken) {
     }
 }
 async function getGraphDevices(accessToken) {
-    // If Intune isn't enabled / user lacks MDM scopes -> return [] (do not crash)
-    const devices = await safeGraphList(accessToken, '/v1.0/deviceManagement/managedDevices?$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userDisplayName,userPrincipalName,serialNumber,joinType,deviceEnrollmentType');
-    return devices.map(mapDevice);
+    const urls = [
+        '/v1.0/deviceManagement/managedDevices?$top=100&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userDisplayName,userPrincipalName,serialNumber',
+        '/v1.0/deviceManagement/managedDevices?$top=100'
+    ];
+    let lastError = null;
+    for (const url of urls) {
+        try {
+            const devices = await graphList(accessToken, url);
+            return devices.map(mapDevice);
+        }
+        catch (err) {
+            lastError = err;
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error('managedDevices failed');
 }
 export async function getDataBundle(accessToken) {
     if (config.mockMode || !accessToken) {

@@ -59,7 +59,7 @@ export async function deviceBulkAction(deviceIds: string[], action: 'sync' | 're
 }
 
 
-export function buildExportUrl(view: string, format: 'json' | 'csv'): string {
-  const normalizedBase = apiBaseUrl || '/api';
-  return `${normalizedBase}/export?view=${encodeURIComponent(view)}&format=${encodeURIComponent(format)}`;
+export function getExportUrl(view: string, format: 'json' | 'csv') {
+  const base = apiBaseUrl || '/api';
+  return `${base}/export?view=${encodeURIComponent(view)}&format=${encodeURIComponent(format)}`;
 }

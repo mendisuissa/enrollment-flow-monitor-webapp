@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { ViewName } from '@efm/shared';
-type ExtendedViewName = ViewName | 'permissionCheck' | 'enrollmentErrorCatalog' | 'reports' | 'readinessChecklist' | 'auditLogs' | 'privacy';
-import { api, buildExportUrl, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction } from './api/client.js';
+type ExtendedViewName = ViewName | 'auditLogs' | 'privacy';
+import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction, getExportUrl } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
 type Row = Record<string, unknown>;
@@ -10,10 +10,8 @@ type Toast = { id: number; kind: 'info' | 'success' | 'error'; message: string }
 
 const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-  { id: 'windowsAutopilot', label: 'Device Preparation (All)', icon: '🖥️' },
-  { id: 'autopilotUserDriven', label: 'Device Preparation - User-Driven', icon: '👤' },
-  { id: 'autopilotPreProvisioning', label: 'Device Preparation - Automatic', icon: '⚙️' },
   { id: 'windowsEnrollment', label: 'Windows Enrollment', icon: '🪟' },
+  { id: 'linuxEnrollment', label: 'Linux Enrollment', icon: '🐧' },
   { id: 'mobileEnrollment', label: 'Mobile Enrollment', icon: '📱' },
   { id: 'macEnrollment', label: 'macOS Enrollment', icon: '🍎' },
   { id: 'ocr', label: 'OCR', icon: '🧠' },
@@ -126,11 +124,9 @@ export default function App() {
         if (view === 'dashboard' && safeRows[0]) {
           const row: any = safeRows[0];
           next['windowsEnrollment'] = Number(row.windowsEnrollmentDevices ?? 0);
+          next['linuxEnrollment'] = Number(row.linuxEnrollmentDevices ?? 0);
           next['mobileEnrollment'] = Number(row.mobileEnrollmentDevices ?? 0);
           next['macEnrollment'] = Number(row.macEnrollmentDevices ?? 0);
-          next['windowsAutopilot'] = Number(row.windowsEnrollmentDevices ?? 0);
-          next['autopilotUserDriven'] = Number(row.autopilotUserDrivenDevices ?? 0);
-          next['autopilotPreProvisioning'] = Number(row.autopilotAutomaticDevices ?? 0);
         }
 
         if (view === 'enrollmentErrorCatalog') {
@@ -176,15 +172,7 @@ export default function App() {
       return;
     }
 
-    // Handle new placeholder views
-    if (currentView === 'permissionCheck') {
-      setRows([]);
-      setSelectedIndex(null);
-      setStatusMessage('Permission Check: Not implemented yet.');
-      setDetailsSummary('Permission Check');
-      setDetailsText('This feature will check required permissions for enrollment scenarios.');
-      return;
-    }
+    // Handle custom views
     if (currentView === 'enrollmentErrorCatalog') {
       setRows([]);
       setSelectedIndex(null);
@@ -326,7 +314,7 @@ export default function App() {
   }
 
   function onExport(format: 'json' | 'csv') {
-    window.open(buildExportUrl(currentView, format), '_blank', 'noopener,noreferrer');
+    window.open(getExportUrl(currentView, format), '_blank');
   }
 
   async function runGraphQuery() {
@@ -433,7 +421,7 @@ export default function App() {
   }
 
   // Device views that support remediation actions
-  const DEVICE_VIEWS: ExtendedViewName[] = ['windowsAutopilot', 'autopilotUserDriven', 'autopilotPreProvisioning', 'windowsEnrollment', 'mobileEnrollment', 'macEnrollment'];
+  const DEVICE_VIEWS: ExtendedViewName[] = ['windowsEnrollment', 'linuxEnrollment', 'mobileEnrollment', 'macEnrollment'];
   const isDeviceView = DEVICE_VIEWS.includes(currentView);
 
   function onPickImage() {
@@ -1394,7 +1382,6 @@ export default function App() {
                   <button className="btn btn-secondary text-left" onClick={() => { onExport('csv'); setSidebarOpen(false); }} disabled={!auth.connected}>Export CSV</button>
                   <button className="btn btn-secondary text-left" onClick={() => { onExport('json'); setSidebarOpen(false); }} disabled={!auth.connected}>Export JSON</button>
                   <button className="btn btn-secondary text-left" onClick={() => { onCopyRunbook(); setSidebarOpen(false); }} disabled={!auth.connected}>Copy Runbook</button>
-                  <button className="btn btn-secondary text-left" onClick={() => { onOpenAuditLogs(); }} disabled={!auth.connected}>Audit Logs</button>
                   <div className="section-divider" />
                   <a
                     className="btn-ai-sidebar"
@@ -1433,7 +1420,6 @@ export default function App() {
               <button className="btn btn-secondary text-left" onClick={() => onExport('csv')} disabled={!auth.connected}>Export CSV</button>
               <button className="btn btn-secondary text-left" onClick={() => onExport('json')} disabled={!auth.connected}>Export JSON</button>
               <button className="btn btn-secondary text-left" onClick={onCopyRunbook} disabled={!auth.connected}>Copy Runbook</button>
-              <button className="btn btn-secondary text-left" onClick={onOpenAuditLogs} disabled={!auth.connected}>Audit Logs</button>
               <div className="section-divider" />
               <a
                 className="btn-ai-sidebar"
@@ -1625,10 +1611,9 @@ export default function App() {
                   <div className="platform-grid">
                     {[
                       { label: 'Windows', value: dashboardData.windowsEnrollmentDevices, icon: '🪟', color: 'var(--amber)' },
+                      { label: 'Linux', value: dashboardData.linuxEnrollmentDevices, icon: '🐧', color: 'var(--blue)' },
                       { label: 'Mobile (iOS/Android)', value: dashboardData.mobileEnrollmentDevices, icon: '📱', color: 'var(--teal)' },
                       { label: 'macOS', value: dashboardData.macEnrollmentDevices, icon: '🍎', color: 'var(--purple)' },
-                      { label: 'Autopilot User-Driven', value: dashboardData.autopilotUserDrivenDevices, icon: '👤', color: 'var(--green)' },
-                      { label: 'Autopilot Automatic', value: dashboardData.autopilotAutomaticDevices, icon: '⚙️', color: 'var(--text-muted)' },
                     ].map(p => (
                       <div key={p.label} className="platform-tile">
                         <span className="pt-icon">{p.icon}</span>

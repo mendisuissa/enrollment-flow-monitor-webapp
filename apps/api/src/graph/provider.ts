@@ -1,6 +1,5 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { AppStatusRow, ManagedDevice, MobileApp, UserRow } from '@efm/shared';
 import { config } from '../config.js';
 import { asString, safeDate } from '../utils/safe.js';
@@ -13,12 +12,8 @@ interface DataBundle {
   devices: ManagedDevice[];
 }
 
-const currentFilePath = fileURLToPath(import.meta.url);
-const currentDir = path.dirname(currentFilePath);
-const fixturesDir = path.resolve(currentDir, '../../fixtures');
-
 async function loadFixture<T>(name: string): Promise<T[]> {
-  const fixturePath = path.resolve(fixturesDir, name);
+  const fixturePath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../fixtures', name);
   const raw = await fs.readFile(fixturePath, 'utf8');
   const data = JSON.parse(raw);
   return Array.isArray(data) ? (data as T[]) : [];
@@ -97,14 +92,12 @@ async function safeGraphList(accessToken: string, url: string): Promise<Record<s
   try {
     return await graphList(accessToken, url);
   } catch (err: any) {
-    if (isExpectedGraphTenantError(err)) return [];
+    const msg = String(err?.message ?? err);
+    if (isExpectedGraphTenantError(err)) {
+      throw new Error(`GRAPH_EXPECTED_ERROR on ${url}: ${msg}`);
+    }
     throw err;
   }
-}
-
-function getGraphErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err ?? 'Unknown Graph error');
 }
 
 async function getGraphApps(accessToken: string): Promise<MobileApp[]> {
@@ -160,34 +153,22 @@ async function getGraphUsers(accessToken: string): Promise<UserRow[]> {
 }
 
 async function getGraphDevices(accessToken: string): Promise<ManagedDevice[]> {
-  const candidates = [
-    '/v1.0/deviceManagement/managedDevices?$top=100&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userDisplayName,userPrincipalName,serialNumber,deviceEnrollmentType',
-    '/v1.0/deviceManagement/managedDevices?$top=100',
-    '/beta/deviceManagement/managedDevices?$top=100'
+  const urls = [
+    '/v1.0/deviceManagement/managedDevices?$top=100&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userDisplayName,userPrincipalName,serialNumber',
+    '/v1.0/deviceManagement/managedDevices?$top=100'
   ];
 
-  let lastError: unknown;
-
-  for (const url of candidates) {
+  let lastError: unknown = null;
+  for (const url of urls) {
     try {
       const devices = await graphList(accessToken, url);
       return devices.map(mapDevice);
-    } catch (err: unknown) {
+    } catch (err) {
       lastError = err;
-      const message = getGraphErrorMessage(err);
-      const isRecoverable =
-        message.includes('BadRequest') ||
-        message.includes('Resource not found for the segment') ||
-        message.includes('Invalid filter clause') ||
-        message.includes('Could not find a property named');
-
-      if (!isRecoverable) {
-        throw new Error(`managedDevices failed on ${url}: ${message}`);
-      }
     }
   }
 
-  throw new Error(`managedDevices failed after all fallbacks: ${getGraphErrorMessage(lastError)}`);
+  throw lastError instanceof Error ? lastError : new Error('managedDevices failed');
 }
 
 export async function getDataBundle(accessToken?: string): Promise<DataBundle> {

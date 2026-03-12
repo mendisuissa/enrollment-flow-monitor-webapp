@@ -26,7 +26,7 @@ const WRITE_SCOPES = process.env.GRAPH_SCOPES_WRITE
 export const config = {
   port: Number(process.env.PORT ?? 4000),
   nodeEnv,
-  mockMode: (process.env.MOCK_MODE ?? 'true').toLowerCase() === 'true',
+  mockMode: (process.env.MOCK_MODE ?? 'false').toLowerCase() === 'true',
   databaseUrl: process.env.DATABASE_URL ?? (isProduction ? 'file:/home/data/efm.db' : 'file:./prisma/dev.db'),
   logFile: process.env.LOG_FILE ?? (isProduction ? '/home/LogFiles/efm/app.log' : './logs/app.log'),
   sessionSecret: process.env.SESSION_SECRET ?? 'dev-session-secret',

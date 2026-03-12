@@ -45,6 +45,7 @@ async function getViewData(accessToken) {
 }
 function buildDashboard(data) {
     const windowsDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('windows'));
+    const linuxDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('linux'));
     const mobileDevices = data.devices.filter((d) => {
         const os = (d.operatingSystem ?? '').toLowerCase();
         return os.includes('ios') || os.includes('android') || os.includes('ipados');
@@ -62,6 +63,7 @@ function buildDashboard(data) {
     return {
         totalDevices: data.devices.length,
         windowsEnrollmentDevices: windowsDevices.length,
+        linuxEnrollmentDevices: linuxDevices.length,
         autopilotUserDrivenDevices: userDriven.length,
         autopilotAutomaticDevices: automatic.length,
         mobileEnrollmentDevices: mobileDevices.length,
@@ -75,7 +77,23 @@ function buildDashboard(data) {
     };
 }
 function buildWindowsEnrollmentGrid(data) {
-    return data.devices.map((device) => ({
+    return data.devices
+        .filter((device) => (device.operatingSystem ?? '').toLowerCase().includes('windows'))
+        .map((device) => ({
+        id: device.id,
+        deviceName: device.deviceName,
+        operatingSystem: device.operatingSystem,
+        osVersion: device.osVersion,
+        complianceState: device.complianceState,
+        lastSyncDateTime: device.lastSyncDateTime,
+        userPrincipalName: device.userPrincipalName,
+        details: `Device: ${device.deviceName}\nOS: ${device.operatingSystem} ${device.osVersion}\nCompliance: ${device.complianceState}\nLast Sync: ${device.lastSyncDateTime}`
+    }));
+}
+function buildLinuxEnrollmentGrid(data) {
+    return data.devices
+        .filter((device) => (device.operatingSystem ?? '').toLowerCase().includes('linux'))
+        .map((device) => ({
         id: device.id,
         deviceName: device.deviceName,
         operatingSystem: device.operatingSystem,
@@ -152,16 +170,17 @@ function buildOcrGrid(data) {
                 details: 'OCR needs app status telemetry. Verify Microsoft Graph delegated permissions and Intune app status availability.'
             }];
 }
-function buildPermissionCheck() {
+function buildPermissionCheck(req) {
+    const token = req.session?.accessToken;
     return [{
             id: 'permission-check',
-            connected: Boolean(config.mockMode || true),
+            connected: Boolean(token),
             mockMode: config.mockMode,
             configuredScopes: (config.entra?.scopes ?? []).join(' '),
-            recommendedScopes: 'openid profile offline_access User.Read User.ReadBasic.All DeviceManagementManagedDevices.Read.All DeviceManagementApps.Read.All',
+            recommendedScopes: 'openid profile offline_access User.Read Directory.Read.All DeviceManagementManagedDevices.Read.All DeviceManagementApps.Read.All DeviceManagementServiceConfig.Read.All',
             details: `Configured scopes:\n${(config.entra?.scopes ?? []).join(' ')}\n\n` +
                 `Recommended (Intune enrollment + app status):\n` +
-                `DeviceManagementManagedDevices.Read.All\nDeviceManagementApps.Read.All\nUser.ReadBasic.All\n\n` +
+                `DeviceManagementManagedDevices.Read.All\nDeviceManagementApps.Read.All\nDeviceManagementServiceConfig.Read.All\nDirectory.Read.All\n\n` +
                 `Remember: delegated permissions require admin consent in Entra ID.`
         }];
 }
@@ -293,7 +312,15 @@ function buildChecklist(data, scenario) {
 }
 export const apiRouter = Router();
 apiRouter.use(ensureConnected);
-apiRouter.get('/debug/token', (req, res) => {
+// ── Debug routes — development only, blocked in production ──
+function devOnly(req, res, next) {
+    if (config.nodeEnv === 'production') {
+        res.status(404).json({ message: 'Not found.' });
+        return;
+    }
+    next();
+}
+apiRouter.get('/debug/token', devOnly, (req, res) => {
     const token = req.session?.accessToken;
     if (!token)
         return res.status(401).json({ connected: false });
@@ -304,18 +331,20 @@ apiRouter.get('/debug/token', (req, res) => {
         scopes: (config.entra?.scopes ?? []).join(' ')
     });
 });
-// בדיקת Graph בסיסית (GET) כדי להבין אם הטננט באמת "חי"
-apiRouter.get('/debug/graph', async (req, res) => {
+apiRouter.get('/debug/graph', devOnly, async (req, res) => {
     const token = req.session?.accessToken;
     if (!token)
         return res.status(401).json({ message: 'Not connected' });
-    const p = typeof req.query.path === 'string' ? req.query.path : '/v1.0/organization';
     try {
-        // פה אתה צריך להשתמש באותה פונקציה/Provider שיש לך ב-graph/provider.js
-        // לדוגמה: const data = await graphGet(p, token);
-        // אם אין לך graphGet – תגיד לי איך provider ממומש ואני אתאים שורה-בשורה.
-        const data = await getDataBundle(token); // זמני: רק כדי לראות שזה בכלל עובד
-        res.json({ ok: true, path: p, data });
+        const data = await getDataBundle(token);
+        // Return only counts — never raw device/user data
+        res.json({
+            ok: true,
+            mockMode: config.mockMode,
+            deviceCount: data.devices?.length ?? 0,
+            userCount: data.users?.length ?? 0,
+            appCount: data.apps?.length ?? 0,
+        });
     }
     catch (e) {
         res.status(500).json({ ok: false, message: e?.message ?? 'Graph failed' });
@@ -336,14 +365,10 @@ apiRouter.get('/view/:view', async (req, res) => {
         const data = await getViewData(req.session.accessToken);
         if (view === 'dashboard')
             return res.json({ rows: [buildDashboard(data)], message: 'Dashboard loaded.' });
-        if (view === 'windowsAutopilot')
-            return res.json({ rows: buildAutopilotAllGrid(data), message: 'Device Preparation (All) loaded.' });
-        if (view === 'autopilotUserDriven')
-            return res.json({ rows: buildAutopilotUserDrivenGrid(data), message: 'Device Preparation - User-Driven loaded.' });
-        if (view === 'autopilotPreProvisioning')
-            return res.json({ rows: buildAutopilotPreProvisioningGrid(data), message: 'Device Preparation - Automatic loaded.' });
         if (view === 'windowsEnrollment')
             return res.json({ rows: buildWindowsEnrollmentGrid(data), message: 'Windows Enrollment loaded.' });
+        if (view === 'linuxEnrollment')
+            return res.json({ rows: buildLinuxEnrollmentGrid(data), message: 'Linux Enrollment loaded.' });
         if (view === 'mobileEnrollment') {
             const mobileRows = data.devices
                 .filter((d) => {
@@ -404,7 +429,7 @@ apiRouter.get('/view/:view', async (req, res) => {
         }
         // Extended views used by the UI
         if (String(req.params.view) === 'permissionCheck')
-            return res.json({ rows: buildPermissionCheck(), message: 'Permission check loaded.' });
+            return res.json({ rows: buildPermissionCheck(req), message: 'Permission check loaded.' });
         if (String(req.params.view) === 'enrollmentErrorCatalog')
             return res.json({ rows: buildEnrollmentErrorCatalog(), message: 'Enrollment Error Catalog loaded.' });
         if (String(req.params.view) === 'reports')
@@ -458,55 +483,52 @@ apiRouter.get('/logs/download', async (_req, res) => {
 apiRouter.post('/ocr/explain', async (req, res) => {
     const { text } = req.body;
     if (!text?.trim()) {
-        return res.status(400).json({ explanation: 'No text provided. Paste an error message and try again.' });
+        return res.status(400).json({
+            category: 'Unknown', confidence: 0,
+            cause: 'No text provided.',
+            recommendedActions: ['Paste an error message and try again.']
+        });
     }
-    // Look up error code in local catalog first (fast, no external call)
     const lowerText = text.toLowerCase();
-    const catalogMatch = enrollmentErrorCatalog.find(entry => {
-        const code = entry.errorCode.toLowerCase();
-        return lowerText.includes(code);
-    });
+    // Match against local catalog using errorCode or title keywords
+    const catalogMatch = enrollmentErrorCatalog.find(entry => lowerText.includes(entry.errorCode.toLowerCase()) ||
+        lowerText.includes(entry.title.toLowerCase().slice(0, 20)));
     if (catalogMatch) {
-        const explanation = [
-            `**${catalogMatch.title}** (${catalogMatch.errorCode})`,
-            '',
-            `**Description:** ${catalogMatch.symptoms}`,
-            '',
-            `**Root Cause:** ${catalogMatch.likelyRootCause}`,
-            '',
-            '**Recommended Actions:**',
-            catalogMatch.remediation
-        ].join('\n');
-        return res.json({ explanation });
+        // Split remediation string into numbered steps
+        const remediationSteps = catalogMatch.remediation
+            .split(/\.\s+(?=[A-Z0-9])/)
+            .map(s => s.trim().replace(/\.$/, ''))
+            .filter(s => s.length > 10);
+        return res.json({
+            category: catalogMatch.area,
+            confidence: 0.95,
+            cause: catalogMatch.likelyRootCause,
+            recommendedActions: remediationSteps.length > 0
+                ? remediationSteps
+                : [catalogMatch.remediation]
+        });
     }
-    // Fallback: extract error code pattern and give generic guidance
-    const errorCodeMatch = text.match(/0x[0-9A-Fa-f]{6,8}|80\d{6}|0x8[0-9A-Fa-f]{7}/);
+    // Fallback: extract error code / correlation ID from raw text
+    const errorCodeMatch = text.match(/0x[0-9A-Fa-f]{6,8}|80[0-9A-Fa-f]{6}/);
     const correlationMatch = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-    const lines = [];
-    if (errorCodeMatch) {
-        lines.push(`**Error Code Detected:** \`${errorCodeMatch[0]}\``);
-        lines.push('');
-        lines.push('This error code was not found in the local catalog. General troubleshooting steps:');
-        lines.push('1. Search https://learn.microsoft.com/en-us/mem/intune for this error code.');
-        lines.push('2. Check Intune portal: Devices → Monitor → Enrollment failures.');
-        lines.push('3. Review Azure AD Sign-in logs for the user/device around the failure timestamp.');
-        lines.push('4. Verify device compliance and MDM enrollment scope in Entra ID.');
-    }
-    else {
-        lines.push('**Enrollment Error Analysis**');
-        lines.push('');
-        lines.push('No specific error code detected. Based on the message content:');
-        lines.push('1. Verify the device has a valid Intune license assigned to the user.');
-        lines.push('2. Confirm the device is in scope for MDM auto-enrollment.');
-        lines.push('3. Check proxy/firewall rules — ensure Intune endpoints are reachable.');
-        lines.push('4. Review: https://www.microsoft.com/wamerrors for Windows-specific codes.');
-    }
+    const actions = [
+        'Search https://learn.microsoft.com/en-us/mem/intune for this error code.',
+        'Check Intune portal → Devices → Monitor → Enrollment failures.',
+        'Review Azure AD Sign-in logs around the failure timestamp.',
+        'Verify the user has a valid Intune license and is in MDM scope.',
+        'Ensure Intune and Azure AD endpoints are reachable (no proxy/firewall block).'
+    ];
     if (correlationMatch) {
-        lines.push('');
-        lines.push(`**Correlation ID:** \`${correlationMatch[0]}\``);
-        lines.push('→ Use this ID in Azure AD audit logs or Intune diagnostic reports for exact trace.');
+        actions.push(`Use Correlation ID ${correlationMatch[0]} in Azure AD audit logs for an exact trace.`);
     }
-    return res.json({ explanation: lines.join('\n') });
+    return res.json({
+        category: errorCodeMatch ? 'EnrollmentError' : 'Unknown',
+        confidence: errorCodeMatch ? 0.5 : 0.1,
+        cause: errorCodeMatch
+            ? `Error code ${errorCodeMatch[0]} detected. Not found in local catalog — manual lookup required.`
+            : 'No specific error code detected in the provided text.',
+        recommendedActions: actions
+    });
 });
 // ── Device Remediation Actions ────────────────────────────
 // These routes MUST use the write token (from GRAPH_SCOPES_WRITE elevated login).
