@@ -1,8 +1,9 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import fs from 'fs/promises';
-import { DashboardData, SettingsData, ViewName, ReportData, PlatformBreakdown, HealthScore, TopErrorEntry, ChecklistItem, ChecklistScenario } from '@efm/shared';
+import { DashboardData, SettingsData, ViewName, ReportData, PlatformBreakdown, HealthScore, TopErrorEntry, ChecklistItem, ChecklistScenario, AppStatusRow } from '@efm/shared';
 import { config } from '../config.js';
 import { normalizeStatus } from '../engines/normalization.js';
+import { graphRequest } from '../graph/graphClient.js';
 import { buildIncidents } from '../engines/incidents.js';
 import { getDataBundle } from '../graph/provider.js';
 import { logger } from '../utils/logger.js';
@@ -344,6 +345,56 @@ function buildChecklist(data: Awaited<ReturnType<typeof getViewData>>, scenario:
   ];
 }
 
+
+async function graphPostAction(accessToken: string, path: string): Promise<void> {
+  const response = await fetch(`https://graph.microsoft.com${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (response.ok || response.status === 204 || response.status === 202) return;
+  const text = await response.text();
+  throw new Error(`Graph action failed (${response.status}) on ${path}: ${text || response.statusText}`);
+}
+
+function requireWriteToken(req: Request): string {
+  const token = (req.session as any)?.writeAccessToken || req.session?.accessToken;
+  if (!token) throw new Error('Not connected. Click Connect first.');
+  return token;
+}
+
+async function explainOcrText(text: string) {
+  const trimmed = text.trim();
+  const fakeRow: AppStatusRow = {
+    id: 'ocr-explain',
+    appId: 'ocr-explain',
+    appName: 'OCR Assistant',
+    targetType: 'device',
+    targetId: 'ocr-input',
+    targetName: 'OCR Input',
+    installState: 'unknown',
+    errorCode: (trimmed.match(/(?:error code|code)[:\s-]*([0-9a-zx-]+)/i)?.[1] ?? 'Unknown').toUpperCase(),
+    errorDescription: trimmed.slice(0, 4000),
+    lastReportedDateTime: new Date().toISOString(),
+    normalizedCategory: '',
+    cause: '',
+    confidence: 0,
+    recommendedActions: []
+  };
+
+  const normalized = await normalizeStatus(fakeRow);
+  return {
+    category: normalized.normalizedCategory,
+    confidence: normalized.confidence,
+    cause: normalized.cause,
+    recommendedActions: normalized.recommendedActions
+  };
+}
+
 export const apiRouter = Router();
 apiRouter.use(ensureConnected);
 
@@ -370,9 +421,16 @@ apiRouter.get('/debug/token', devOnly, (req, res) => {
 apiRouter.get('/debug/graph', devOnly, async (req, res) => {
   const token = req.session?.accessToken;
   if (!token) return res.status(401).json({ message: 'Not connected' });
+
+  const path = typeof req.query.path === 'string' ? req.query.path : '';
   try {
+    if (path) {
+      const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+      const payload = await graphRequest<any>(token, `/v1.0${normalizedPath.replace(/^\/v1\.0/, '')}`);
+      return res.json(payload);
+    }
+
     const data = await getDataBundle(token);
-    // Return only counts — never raw device/user data
     res.json({
       ok: true,
       mockMode: config.mockMode,
@@ -382,6 +440,86 @@ apiRouter.get('/debug/graph', devOnly, async (req, res) => {
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, message: e?.message ?? 'Graph failed' });
+  }
+});
+
+apiRouter.post('/graph/query', async (req, res) => {
+  const token = req.session?.accessToken;
+  if (!token) return res.status(401).json({ message: 'Not connected' });
+  const rawPath = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
+  if (!rawPath) return res.status(400).json({ message: 'Missing Graph path.' });
+  try {
+    const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    const payload = await graphRequest<any>(token, `/v1.0${normalizedPath.replace(/^\/v1\.0/, '')}`);
+    return res.json(payload);
+  } catch (error: any) {
+    return res.status(500).json({ message: error?.message ?? 'Graph query failed.' });
+  }
+});
+
+apiRouter.post('/ocr/explain', async (req, res) => {
+  const text = typeof req.body?.text === 'string' ? req.body.text : '';
+  if (!text.trim()) return res.status(400).json({ message: 'Missing OCR text.' });
+  try {
+    const explanation = await explainOcrText(text);
+    return res.json(explanation);
+  } catch (error: any) {
+    return res.status(500).json({ message: error?.message ?? 'OCR explanation failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/sync', async (req, res) => {
+  try {
+    const token = requireWriteToken(req);
+    await graphPostAction(token, `/v1.0/deviceManagement/managedDevices/${encodeURIComponent(String(req.params.deviceId))}/syncDevice`);
+    return res.json({ success: true, message: 'Sync command sent.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Sync failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/reboot', async (req, res) => {
+  try {
+    const token = requireWriteToken(req);
+    await graphPostAction(token, `/v1.0/deviceManagement/managedDevices/${encodeURIComponent(String(req.params.deviceId))}/rebootNow`);
+    return res.json({ success: true, message: 'Reboot command sent.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Reboot failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/autopilotReset', async (req, res) => {
+  try {
+    const token = requireWriteToken(req);
+    await graphPostAction(token, `/beta/deviceManagement/managedDevices/${encodeURIComponent(String(req.params.deviceId))}/cleanWindowsDevice`);
+    return res.json({ success: true, message: 'Autopilot Reset command sent.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Autopilot Reset failed.' });
+  }
+});
+
+apiRouter.post('/devices/bulk', async (req, res) => {
+  const deviceIds = Array.isArray(req.body?.deviceIds) ? req.body.deviceIds.map(String).filter(Boolean) : [];
+  const action = typeof req.body?.action === 'string' ? req.body.action : '';
+  if (deviceIds.length === 0 || !['sync','reboot','autopilotReset'].includes(action)) {
+    return res.status(400).json({ success: false, message: 'Invalid bulk request.' });
+  }
+  try {
+    const token = requireWriteToken(req);
+    const results = [];
+    for (const id of deviceIds) {
+      try {
+        if (action === 'sync') await graphPostAction(token, `/v1.0/deviceManagement/managedDevices/${encodeURIComponent(id)}/syncDevice`);
+        else if (action === 'reboot') await graphPostAction(token, `/v1.0/deviceManagement/managedDevices/${encodeURIComponent(id)}/rebootNow`);
+        else await graphPostAction(token, `/beta/deviceManagement/managedDevices/${encodeURIComponent(id)}/cleanWindowsDevice`);
+        results.push({ id, ok: true });
+      } catch (error: any) {
+        results.push({ id, ok: false, error: error?.message ?? 'Action failed.' });
+      }
+    }
+    return res.json({ success: results.every((r:any)=>r.ok), results });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Bulk action failed.' });
   }
 });
 

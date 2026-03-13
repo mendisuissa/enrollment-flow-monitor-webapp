@@ -20,8 +20,7 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'enrollmentErrorCatalog', label: 'Enrollment Error Catalog', icon: '📚' },
   { id: 'reports', label: 'Reports', icon: '📈' },
   { id: 'readinessChecklist', label: 'Readiness Checklist', icon: '✅' },
-  { id: 'auditLogs', label: 'Audit Logs', icon: '📋' },
-  { id: 'settings', label: 'Settings', icon: '⚙️' }
+  { id: 'auditLogs', label: 'Audit Logs', icon: '📋' }
 ];
 
 function toText(value: unknown): string {
@@ -104,6 +103,15 @@ export default function App() {
       setStatusMessage('OCR assistant ready. Upload image or paste error text, then analyze.');
       setDetailsSummary('OCR & Error Assistant');
       setDetailsText(ocrAssistantAnswer || 'Pick image, run OCR, then get explanation. You can also type error text manually.');
+      return;
+    }
+
+    if (view === 'privacy') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Privacy policy loaded.');
+      setDetailsSummary('Privacy Policy');
+      setDetailsText('Review the privacy policy content for Enrollment Flow Monitor.');
       return;
     }
 
@@ -381,7 +389,7 @@ export default function App() {
     setGraphLoading(true);
     setGraphResult('');
     try {
-      const res = await api.get(`/debug/graph?path=/${graphQuery.replace(/^\//, '')}`);
+      const res = await api.post('/graph/query', { path: graphQuery.replace(/^\//, '') });
       setGraphResult(JSON.stringify(res.data, null, 2));
     } catch (e: any) {
       setGraphResult(JSON.stringify({ error: e?.message ?? 'Query failed' }, null, 2));
