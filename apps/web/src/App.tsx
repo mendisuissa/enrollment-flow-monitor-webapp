@@ -8,29 +8,6 @@ type Row = Record<string, unknown>;
 type ThemePreference = 'system' | 'light' | 'dark';
 type Toast = { id: number; kind: 'info' | 'success' | 'error'; message: string };
 
-const TUTORIAL_VIDEOS = {
-  short: {
-    id: 'short',
-    label: 'Quick Tour',
-    duration: '2 min',
-    title: 'Quick Tour - Enrollment Flow Monitor',
-    embedUrl: 'https://www.youtube.com/embed/HgWXmVVS_UY?rel=0&modestbranding=1',
-    watchUrl: 'https://youtu.be/HgWXmVVS_UY',
-    description: 'Fast product walkthrough for first-time users.'
-  },
-  full: {
-    id: 'full',
-    label: 'Full Demo',
-    duration: '6 min',
-    title: 'Full Demo - Enrollment Flow Monitor',
-    embedUrl: 'https://www.youtube.com/embed/VoLX31W2kOI?rel=0&modestbranding=1',
-    watchUrl: 'https://youtu.be/VoLX31W2kOI',
-    description: 'Deeper tour of dashboards, troubleshooting, and reporting.'
-  }
-} as const;
-
-const WELCOME_PDF_URL = '/Enrollment_Flow_Monitor.pdf';
-
 const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'windowsEnrollment', label: 'Windows Enrollment', icon: '🪟' },
@@ -43,7 +20,7 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'enrollmentErrorCatalog', label: 'Enrollment Error Catalog', icon: '📚' },
   { id: 'reports', label: 'Reports', icon: '📈' },
   { id: 'readinessChecklist', label: 'Readiness Checklist', icon: '✅' },
-  { id: 'auditLogs', label: 'Audit Logs', icon: '📋' },
+  { id: 'auditLogs', label: 'Audit Logs', icon: '📋' }059a16c (fix: settings)
 ];
 
 function toText(value: unknown): string {
@@ -126,6 +103,15 @@ export default function App() {
       setStatusMessage('OCR assistant ready. Upload image or paste error text, then analyze.');
       setDetailsSummary('OCR & Error Assistant');
       setDetailsText(ocrAssistantAnswer || 'Pick image, run OCR, then get explanation. You can also type error text manually.');
+      return;
+    }
+
+    if (view === 'privacy') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Privacy policy loaded.');
+      setDetailsSummary('Privacy Policy');
+      setDetailsText('Review the privacy policy content for Enrollment Flow Monitor.');
       return;
     }
 
@@ -403,7 +389,7 @@ export default function App() {
     setGraphLoading(true);
     setGraphResult('');
     try {
-      const res = await api.get(`/debug/graph?path=/${graphQuery.replace(/^\//, '')}`);
+      const res = await api.post('/graph/query', { path: graphQuery.replace(/^\//, '') });
       setGraphResult(JSON.stringify(res.data, null, 2));
     } catch (e: any) {
       setGraphResult(JSON.stringify({ error: e?.message ?? 'Query failed' }, null, 2));
@@ -1054,7 +1040,6 @@ export default function App() {
 
   // Tutorial modal state
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const [activeTutorial, setActiveTutorial] = useState<keyof typeof TUTORIAL_VIDEOS>('short');
 
   // Dashboard KPI state
   const [dashboardData, setDashboardData] = useState<any>(null);
@@ -1529,24 +1514,17 @@ export default function App() {
             <div className="welcome-screen">
               <div className="welcome-hero">
                 <div className="welcome-logo-mark">EF</div>
-                <h1 className="welcome-title">Enrollment Flow Monitor</h1>
+                <h1 className="welcome-title">Welcome to Enrollment Flow Monitor</h1>
                 <p className="welcome-tagline">
-                  The all-in-one Intune enrollment intelligence platform for IT Admins —
-                  diagnose failures, track compliance, and roll out with confidence.
+                  A centralized experience for monitoring enrollment, reviewing readiness, and troubleshooting device onboarding across your environment.
                 </p>
                 <div className="welcome-actions">
                   <button className="btn btn-primary welcome-signin-btn" onClick={() => { window.location.href = '/api/auth/login'; }}>
                     🔑 Sign in with Microsoft
                   </button>
-                  <button className="btn welcome-tutorial-btn" onClick={() => { setActiveTutorial('short'); setTutorialOpen(true); }}>
-                    ▶ Quick Tour
+                  <button className="btn welcome-tutorial-btn" onClick={() => setTutorialOpen(true)}>
+                    ▶ Open Welcome Resources
                   </button>
-                  <button className="btn welcome-tutorial-btn" onClick={() => { setActiveTutorial('full'); setTutorialOpen(true); }}>
-                    ▶ Full Demo
-                  </button>
-                  <a className="btn welcome-tutorial-btn" href={WELCOME_PDF_URL} target="_blank" rel="noopener noreferrer">
-                    📄 Product PDF
-                  </a>
                 </div>
               </div>
 
@@ -1554,57 +1532,32 @@ export default function App() {
                 <div className="welcome-feature">
                   <span className="wf-icon">📚</span>
                   <div className="wf-text">
-                    <div className="wf-title">Error Catalog</div>
-                    <div className="wf-desc">53 known enrollment errors with remediation steps</div>
+                    <div className="wf-title">Enrollment Error Catalog</div>
+                    <div className="wf-desc">Known enrollment issues with guided remediation steps</div>
                   </div>
                 </div>
                 <div className="welcome-feature">
                   <span className="wf-icon">📈</span>
                   <div className="wf-text">
-                    <div className="wf-title">Live Reports</div>
-                    <div className="wf-desc">Health scores, compliance rates & platform breakdown</div>
+                    <div className="wf-title">Operational Insights</div>
+                    <div className="wf-desc">Track enrollment activity, health signals, and platform breakdowns</div>
                   </div>
                 </div>
                 <div className="welcome-feature">
                   <span className="wf-icon">✅</span>
                   <div className="wf-text">
-                    <div className="wf-title">Readiness Checklist</div>
-                    <div className="wf-desc">Pre-flight for Autopilot, ADE, Android Enterprise</div>
+                    <div className="wf-title">Readiness Checklists</div>
+                    <div className="wf-desc">Validate Autopilot, ADE, Android Enterprise, and rollout readiness</div>
                   </div>
                 </div>
                 <div className="welcome-feature">
                   <span className="wf-icon">🤖</span>
                   <div className="wf-text">
-                    <div className="wf-title">AI Assistant</div>
-                    <div className="wf-desc">M-Intune Architect AI — Enterprise Edition</div>
+                    <div className="wf-title">Guided Troubleshooting</div>
+                    <div className="wf-desc">Use built-in workflows and AI-assisted guidance to resolve issues faster</div>
                   </div>
                 </div>
               </div>
-
-              <div className="welcome-features welcome-resource-grid">
-                <button className="welcome-feature welcome-resource-card" onClick={() => { setActiveTutorial('short'); setTutorialOpen(true); }}>
-                  <span className="wf-icon">🎬</span>
-                  <div className="wf-text">
-                    <div className="wf-title">Quick Tour</div>
-                    <div className="wf-desc">2-minute English introduction for first-time users</div>
-                  </div>
-                </button>
-                <button className="welcome-feature welcome-resource-card" onClick={() => { setActiveTutorial('full'); setTutorialOpen(true); }}>
-                  <span className="wf-icon">📺</span>
-                  <div className="wf-text">
-                    <div className="wf-title">Full Demo</div>
-                    <div className="wf-desc">6-minute English walkthrough covering the full flow</div>
-                  </div>
-                </button>
-                <a className="welcome-feature welcome-resource-card" href={WELCOME_PDF_URL} target="_blank" rel="noopener noreferrer">
-                  <span className="wf-icon">📄</span>
-                  <div className="wf-text">
-                    <div className="wf-title">Product PDF</div>
-                    <div className="wf-desc">Open the product guide / overview PDF in a new tab</div>
-                  </div>
-                </a>
-              </div>
-
 
               <div className="welcome-footer">
                 © {new Date().getFullYear()} <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'none', fontWeight: 700 }}>modernendpoint.tech</a> · by Menahem Suissa ·{' '}
@@ -1619,33 +1572,25 @@ export default function App() {
                       <div className="tutorial-modal-title">▶ Welcome Resources</div>
                       <button className="tutorial-close-btn" onClick={() => setTutorialOpen(false)}>✕</button>
                     </div>
-                    <div className="tutorial-chapter-list" style={{ marginBottom: 16 }}>
-                      <button className="btn btn-secondary" onClick={() => setActiveTutorial('short')} style={{ opacity: activeTutorial === 'short' ? 1 : 0.78 }}>
-                        🎬 {TUTORIAL_VIDEOS.short.label} · {TUTORIAL_VIDEOS.short.duration}
-                      </button>
-                      <button className="btn btn-secondary" onClick={() => setActiveTutorial('full')} style={{ opacity: activeTutorial === 'full' ? 1 : 0.78 }}>
-                        📺 {TUTORIAL_VIDEOS.full.label} · {TUTORIAL_VIDEOS.full.duration}
-                      </button>
-                      <a className="btn btn-secondary" href={WELCOME_PDF_URL} target="_blank" rel="noopener noreferrer">
-                        📄 Open Product PDF
-                      </a>
-                    </div>
                     <div className="tutorial-video-wrap">
                       <iframe
-                        src={TUTORIAL_VIDEOS[activeTutorial].embedUrl}
-                        title={TUTORIAL_VIDEOS[activeTutorial].title}
+                        src="https://www.youtube.com/embed/HgWXmVVS_UY?rel=0&modestbranding=1"
+                        title="Enrollment Flow Monitor – Quick Tour"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                         allowFullScreen
                       />
                     </div>
                     <div className="tutorial-chapters">
-                      <div className="tutorial-chapter-label">Now playing:</div>
+                      <div className="tutorial-chapter-label">Get started:</div>
                       <div className="tutorial-chapter-list">
-                        <span className="tutorial-chapter">{TUTORIAL_VIDEOS[activeTutorial].label} · {TUTORIAL_VIDEOS[activeTutorial].duration}</span>
-                        <span className="tutorial-chapter">{TUTORIAL_VIDEOS[activeTutorial].description}</span>
-                        <a className="tutorial-chapter" href={TUTORIAL_VIDEOS[activeTutorial].watchUrl} target="_blank" rel="noopener noreferrer">
-                          Open on YouTube
-                        </a>
+                        <span className="tutorial-chapter">Quick Tour — 2-minute introduction for first-time users</span>
+                        <span className="tutorial-chapter">Full Demo — 6-minute walkthrough of dashboards, troubleshooting, and reporting</span>
+                        <span className="tutorial-chapter">Product Overview PDF — concise overview of scope, capabilities, and use cases</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 14 }}>
+                        <a className="btn btn-primary" href="https://youtu.be/HgWXmVVS_UY" target="_blank" rel="noopener noreferrer">Watch Quick Tour</a>
+                        <a className="btn" href="https://youtu.be/VoLX31W2kOI" target="_blank" rel="noopener noreferrer">Watch Full Demo</a>
+                        <a className="btn" href="/Enrollment_Flow_Monitor.pdf" target="_blank" rel="noopener noreferrer">Open Product PDF</a>
                       </div>
                     </div>
                   </div>
@@ -2606,3 +2551,4 @@ export default function App() {
     </div>
   );
 }
+
