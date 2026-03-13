@@ -83,9 +83,18 @@ export default function App() {
     try {
       const result = await getAuthStatus();
       setAuth(result);
+      return result;
     } catch {
-      setAuth({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
+      const fallback = { connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false };
+      setAuth(fallback);
+      return fallback;
     }
+  }
+
+  function setConnectedPanel(summary: string, extra?: string) {
+    const identity = auth.displayName || auth.upn || 'Connected user';
+    setDetailsSummary(summary);
+    setDetailsText(extra ?? `Signed in as ${identity}. Tenant data is available.`);
   }
 
   async function loadView(view: ExtendedViewName) {
@@ -137,8 +146,12 @@ export default function App() {
       });
 
       if (safeRows.length === 0) {
-        setDetailsSummary('No data returned for this view.');
-        setDetailsText('The endpoint returned an empty dataset. This is handled safely.');
+        setDetailsSummary(auth.connected ? 'No data returned for this view.' : 'Guest preview');
+        setDetailsText(
+          auth.connected
+            ? 'The endpoint returned an empty dataset. This is handled safely.'
+            : 'You can browse the interface before signing in. Use Sign in to continue.'
+        );
       } else {
         const first = safeRows[0];
         setDetailsSummary(
@@ -149,9 +162,15 @@ export default function App() {
     } catch (error) {
       setRows([]);
       setSelectedIndex(null);
-      setStatusMessage(error instanceof Error ? error.message : 'Failed to load view.');
-      setDetailsSummary('Load failed');
-      setDetailsText('Friendly error handling kept the UI stable.');
+      const message = error instanceof Error ? error.message : 'Failed to load view.';
+      setStatusMessage(message);
+      if (auth.connected) {
+        setDetailsSummary('Load failed');
+        setDetailsText(message);
+      } else {
+        setDetailsSummary('Guest preview');
+        setDetailsText('You can browse the interface before signing in. Use Sign in to continue.');
+      }
       addToast('error', 'View load failed.');
     } finally {
       setIsViewLoading(false);
@@ -184,34 +203,52 @@ export default function App() {
     if (currentView === 'reports') {
       setRows([]);
       setSelectedIndex(null);
+      setConnectedPanel('Reports', 'Signed in. Loading enrollment analytics...');
       setStatusMessage('Reports: Loading enrollment analytics...');
       getView('reports' as any).then(result => {
         const data = result.rows?.[0] as any;
         setReportData(data ?? null);
         setStatusMessage('Reports loaded.');
-      }).catch(() => setStatusMessage('Reports load failed.'));
+        setConnectedPanel('Reports', 'Signed in. Reports data loaded successfully.');
+      }).catch((error) => {
+        setStatusMessage('Reports load failed.');
+        setDetailsSummary('Load failed');
+        setDetailsText(error instanceof Error ? error.message : 'Reports load failed.');
+      });
       return;
     }
     if (currentView === 'readinessChecklist') {
       setRows([]);
       setSelectedIndex(null);
+      setConnectedPanel('Readiness Checklist', 'Signed in. Loading checklist data...');
       setStatusMessage('Readiness Checklist loaded.');
       getView('readinessChecklist' as any).then(result => {
         setChecklistItems(result.rows ?? []);
-      }).catch(() => setChecklistItems([]));
+        setConnectedPanel('Readiness Checklist', 'Signed in. Checklist data loaded successfully.');
+      }).catch((error) => {
+        setChecklistItems([]);
+        setDetailsSummary('Load failed');
+        setDetailsText(error instanceof Error ? error.message : 'Readiness checklist load failed.');
+      });
       return;
     }
     if (currentView === 'dashboard') {
       setRows([]);
       setSelectedIndex(null);
       setIsViewLoading(true);
+      setConnectedPanel('Dashboard overview');
       setStatusMessage('Loading dashboard...');
       getView('dashboard').then(result => {
         const data = result.rows?.[0] as any;
         setDashboardData(data ?? null);
         setStatusMessage('Dashboard loaded.');
+        setConnectedPanel('Dashboard overview', 'Signed in. Dashboard metrics loaded successfully.');
         addAuditLog('View Dashboard', 'Dashboard loaded', 'info');
-      }).catch(() => setStatusMessage('Dashboard load failed.')).finally(() => setIsViewLoading(false));
+      }).catch((error) => {
+        setStatusMessage('Dashboard load failed.');
+        setDetailsSummary('Load failed');
+        setDetailsText(error instanceof Error ? error.message : 'Dashboard load failed.');
+      }).finally(() => setIsViewLoading(false));
       return;
     }
 
@@ -258,11 +295,33 @@ export default function App() {
   async function onRefresh() {
     try {
       setIsRefreshing(true);
+      await loadAuth();
       await refreshData();
-      await loadView(currentView);
+      if (currentView === 'dashboard') {
+        const result = await getView('dashboard');
+        const data = result.rows?.[0] as any;
+        setDashboardData(data ?? null);
+        setStatusMessage(result.message || 'Dashboard loaded.');
+        setConnectedPanel('Dashboard overview', 'Signed in. Dashboard metrics loaded successfully.');
+      } else if (currentView === 'reports') {
+        const result = await getView('reports' as any);
+        setReportData((result.rows?.[0] as any) ?? null);
+        setStatusMessage(result.message || 'Reports loaded.');
+        setConnectedPanel('Reports', 'Signed in. Reports data loaded successfully.');
+      } else if (currentView === 'readinessChecklist') {
+        const result = await getView('readinessChecklist' as any);
+        setChecklistItems(result.rows ?? []);
+        setStatusMessage(result.message || 'Readiness checklist loaded.');
+        setConnectedPanel('Readiness Checklist', 'Signed in. Checklist data loaded successfully.');
+      } else {
+        await loadView(currentView);
+      }
       addToast('success', 'Data refreshed.');
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Refresh failed');
+      const message = error instanceof Error ? error.message : 'Refresh failed';
+      setStatusMessage(message);
+      setDetailsSummary('Refresh failed');
+      setDetailsText(message);
       addToast('error', 'Refresh failed.');
     } finally {
       setIsRefreshing(false);
@@ -1382,6 +1441,11 @@ export default function App() {
                   <button className="btn btn-secondary text-left" onClick={() => { onExport('csv'); setSidebarOpen(false); }} disabled={!auth.connected}>Export CSV</button>
                   <button className="btn btn-secondary text-left" onClick={() => { onExport('json'); setSidebarOpen(false); }} disabled={!auth.connected}>Export JSON</button>
                   <button className="btn btn-secondary text-left" onClick={() => { onCopyRunbook(); setSidebarOpen(false); }} disabled={!auth.connected}>Copy Runbook</button>
+                  {auth.connected && (
+                    <button className="btn btn-danger text-left" onClick={() => { void onDisconnect(); setSidebarOpen(false); }}>
+                      Disconnect
+                    </button>
+                  )}
                   <div className="section-divider" />
                   <a
                     className="btn-ai-sidebar"
