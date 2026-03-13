@@ -44,7 +44,6 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'reports', label: 'Reports', icon: '📈' },
   { id: 'readinessChecklist', label: 'Readiness Checklist', icon: '✅' },
   { id: 'auditLogs', label: 'Audit Logs', icon: '📋' },
-  { id: 'settings', label: 'Settings', icon: '⚙️' }
 ];
 
 function toText(value: unknown): string {
