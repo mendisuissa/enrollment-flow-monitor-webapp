@@ -20,7 +20,7 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'enrollmentErrorCatalog', label: 'Enrollment Error Catalog', icon: '📚' },
   { id: 'reports', label: 'Reports', icon: '📈' },
   { id: 'readinessChecklist', label: 'Readiness Checklist', icon: '✅' },
-  { id: 'auditLogs', label: 'Audit Logs', icon: '📋' }059a16c (fix: settings)
+  { id: 'auditLogs', label: 'Audit Logs', icon: '📋' }
 ];
 
 function toText(value: unknown): string {
