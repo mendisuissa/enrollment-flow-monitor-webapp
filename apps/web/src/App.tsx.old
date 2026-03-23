@@ -1692,7 +1692,82 @@ export default function App() {
           )}
 
           {/* Auth actions */}
-          {!auth.connected ? (
+          {currentView === 'privacy' ? (
+  <div className="privacy-shell">
+    <div className="privacy-header">
+      <button
+        className="btn btn-secondary"
+        style={{ fontSize: 11, marginBottom: 16, alignSelf: 'flex-start' }}
+        onClick={() => setCurrentView(auth.connected ? 'dashboard' : 'home')}
+      >
+        ← Back
+      </button>
+      <h1 className="privacy-title">Privacy Policy</h1>
+      <p className="privacy-effective">
+        Effective date: January 1, 2025 ·{' '}
+        <a
+          href="https://modernendpoint.tech"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="privacy-site-link"
+        >
+          modernendpoint.tech
+        </a>
+      </p>
+    </div>
+
+    <div className="privacy-body">
+      {[
+        {
+          title: '1. Introduction',
+          content:
+            'Enrollment Flow Monitor ("the App") is operated by Menahem Suissa / modernendpoint.tech. This Privacy Policy explains how we collect, use, and protect information when you use the App to monitor Microsoft Intune enrollment data in your organization.'
+        },
+        {
+          title: '2. Data We Access',
+          content:
+            "The App connects to Microsoft Graph API using delegated permissions granted by you or your organization's IT administrator. It accesses device management data including device names, compliance states, enrollment statuses, and user principal names solely to display them within the App interface."
+        },
+        {
+          title: '3. Data Storage',
+          content:
+            'The App does not store, cache, or transmit your Microsoft tenant data to any external server owned by us. All Microsoft Graph data is fetched in real-time and displayed only in your browser session. Session data (authentication tokens) is stored server-side in an encrypted session for the duration of your login only.'
+        },
+        {
+          title: '4. Authentication & Permissions',
+          content:
+            'Authentication is handled entirely through Microsoft Entra ID (Azure AD) using the official OAuth 2.0 authorization code flow. We request only the minimum Graph API permissions required. Privileged permissions are requested separately, only when you explicitly choose to enable remote actions.'
+        },
+        {
+          title: '5. Audit Trail',
+          content:
+            'In-app audit logs record actions you perform within your browser session. These logs are stored in memory only and cleared when you close or refresh the browser. You may export them as CSV at any time.'
+        },
+        {
+          title: '6. Third-Party Services',
+          content:
+            "The App integrates with Microsoft Graph API and may include YouTube embedded tutorial content. Any external service is governed by its own privacy policy."
+        },
+        {
+          title: '7. Your Rights',
+          content:
+            'You may disconnect your Microsoft account at any time using the Disconnect option in the user menu. This destroys your session and removes cached authentication data.'
+        },
+        {
+          title: '8. Contact',
+          content:
+            'For privacy-related questions, please visit modernendpoint.tech or contact Menahem Suissa through the website.'
+        }
+      ].map((section) => (
+        <div key={section.title} className="privacy-section">
+          <h2 className="privacy-section-title">{section.title}</h2>
+          <p className="privacy-section-body">{section.content}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+) : !auth.connected ? (
+  <div className="welcome-screen">
             <button className="btn btn-primary" onClick={() => { window.location.href = '/api/auth/login'; }}>
               {isMobile ? 'Sign in' : '🔑 Sign in'}
             </button>
@@ -2520,7 +2595,7 @@ export default function App() {
           ) : currentView === 'privacy' ? (
             <div className="privacy-shell">
               <div className="privacy-header">
-                <button className="btn btn-secondary" style={{ fontSize: 11, marginBottom: 16, alignSelf: 'flex-start' }} onClick={() => setCurrentView(auth.connected ? 'dashboard' : 'home')}>← Back</button>
+                <button className="btn btn-secondary" style={{ fontSize: 11, marginBottom: 16, alignSelf: 'flex-start' }} onClick={() => setCurrentView('dashboard')}>← Back</button>
                 <h1 className="privacy-title">Privacy Policy</h1>
                 <p className="privacy-effective">Effective date: January 1, 2025 · <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" className="privacy-site-link">modernendpoint.tech</a></p>
               </div>

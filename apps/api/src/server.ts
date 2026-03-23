@@ -29,13 +29,27 @@ function devOnly(req: express.Request, res: express.Response, next: express.Next
 function applySecurityHeaders(_req: express.Request, res: express.Response, next: express.NextFunction): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+
   if (config.nodeEnv === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://login.microsoftonline.com;");
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; " +
+        "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://www.google-analytics.com https://region1.google-analytics.com; " +
+        "img-src 'self' data: https:; " +
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+        "font-src 'self' https://fonts.gstatic.com; " +
+        "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; " +
+        "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; " +
+        "frame-ancestors 'none'; " +
+        "base-uri 'self'; " +
+        "form-action 'self' https://login.microsoftonline.com;"
+    );
   }
+
   next();
 }
 
