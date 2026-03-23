@@ -1936,7 +1936,7 @@ export default function App() {
                     </div>
                     <div className="tutorial-video-wrap">
                       <iframe
-                        src="https://youtu.be/VoLX31W2kOI"
+                        src="https://youtu.be/VoLX31W2kOI?si=CiPf5d13nLLy8z_n"
                         title="Enrollment Flow Monitor – Tutorial"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                         allowFullScreen
