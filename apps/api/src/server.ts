@@ -74,20 +74,10 @@ function apiRateLimit(req: express.Request, res: express.Response, next: express
 app.use(pinoHttp({ logger: requestLogger }));
 app.use(applySecurityHeaders);
 app.use(apiRateLimit);
-// IMPORTANT:
-// Do NOT throw on unknown origins.
-// Throwing here causes 500 responses which breaks loading same-origin static assets
-// (scripts/styles) on Azure App Service when Origin is present.
-// For non-allowed origins we simply disable CORS headers (browser will block XHR/fetch).
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (curl, health probes, etc.)
     if (!origin) return callback(null, true);
-
-    // Explicit allow-list
     if (config.corsOrigins.includes(origin)) return callback(null, true);
-
-    // Not allowed: don't set CORS headers, but don't fail the request.
     return callback(null, false);
   },
   credentials: true
@@ -104,9 +94,6 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    // 'none' required in production when frontend/backend share the same origin via
-    // Azure custom domain but the OAuth redirect goes through azurewebsites.net first.
-    // 'lax' breaks the session cookie on the redirect back from Entra.
     sameSite: isProduction ? 'none' : 'lax',
     secure: isProduction
   }
@@ -194,7 +181,6 @@ app.get('/api/diag', devOnly, (req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api', subscriptionRouter);
 
-// Public diagnostic — no auth required, safe metadata only
 app.get('/api/debug/connection', devOnly, (req: any, res) => {
   const token = req.session?.accessToken;
   res.json({
