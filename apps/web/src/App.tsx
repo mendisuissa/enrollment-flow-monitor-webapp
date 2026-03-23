@@ -1768,7 +1768,7 @@ export default function App() {
               <span style={{ fontSize:11, color:'#475569' }}>{TRIAL_DAYS_TOTAL - Math.min(daysLeft, TRIAL_DAYS_TOTAL)}/{TRIAL_DAYS_TOTAL} days</span>
             </div>
             {/* CTA */}
-            <button onClick={() => window.open('https://mendi46.gumroad.com/l/cynmjz', '_blank')} style={{
+            <button onClick={() => window.open('https://moderne.gumroad.com/l/cynmjz', '_blank')} style={{
               padding:'4px 14px', borderRadius:5, fontSize:11, fontFamily:'inherit', fontWeight:500,
               cursor:'pointer', border:`1px solid ${color}55`, background:`${color}14`, color, flexShrink:0,
             }}>
@@ -2208,7 +2208,7 @@ export default function App() {
               {isTrialExpired && (
                 <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', margin:'0 0 12px', borderRadius:6, background:'#1a0a0a', border:'1px solid #ef444433' }}>
                   <span style={{ fontSize:13, color:'#ef4444', fontFamily:"'DM Mono',monospace" }}>🔒 OCR &amp; AI are disabled — trial expired. Upgrade to restore access.</span>
-                  <button onClick={() => window.open('https://mendi46.gumroad.com/l/cynmjz', '_blank')} style={{ marginLeft:'auto', padding:'3px 12px', borderRadius:4, fontSize:11, fontFamily:"'DM Mono',monospace", cursor:'pointer', border:'1px solid #ef444455', background:'#ef444414', color:'#ef4444', flexShrink:0 }}>↑ Upgrade</button>
+                  <button onClick={() => window.open('https://moderne.gumroad.com/l/cynmjz', '_blank')} style={{ marginLeft:'auto', padding:'3px 12px', borderRadius:4, fontSize:11, fontFamily:"'DM Mono',monospace", cursor:'pointer', border:'1px solid #ef444455', background:'#ef444414', color:'#ef4444', flexShrink:0 }}>↑ Upgrade</button>
                 </div>
               )}
               <div className="ocr-head">
