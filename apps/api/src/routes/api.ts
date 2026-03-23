@@ -1,0 +1,788 @@
+import { NextFunction, Request, Response, Router } from 'express';
+import fs from 'fs/promises';
+import { DashboardData, DashboardAction, SettingsData, ViewName, ReportData, PlatformBreakdown, HealthScore, TopErrorEntry, ChecklistItem, ChecklistScenario, AppStatusRow, IncidentRow, IncidentWorkflowStatus } from '@efm/shared';
+import { config } from '../config.js';
+import { normalizeStatus } from '../engines/normalization.js';
+import { buildIncidents } from '../engines/incidents.js';
+import { getDataBundle } from '../graph/provider.js';
+import { logger } from '../utils/logger.js';
+import { PrismaIncidentRepository } from '../storage/incidentRepository.js';
+import { enrollmentErrorCatalog } from '../catalog/enrollmentErrors.js';
+import { z } from 'zod';
+
+const incidentRepo = new PrismaIncidentRepository();
+
+const workflowSchema = z.object({
+  owner: z.string().trim().max(120).default('Unassigned'),
+  status: z.enum(['New', 'Investigating', 'Mitigating', 'Resolved']),
+  notes: z.string().trim().max(4000).default('')
+});
+
+const bulkDeviceActionSchema = z.object({
+  deviceIds: z.array(z.string().trim().min(1)).min(1).max(100),
+  action: z.enum(['sync', 'reboot', 'autopilotReset'])
+});
+
+function getSessionTenantId(req: Request): string | null {
+  const tenantId = String((req.session as any)?.account?.tenantId ?? '').trim();
+  return tenantId || null;
+}
+
+function ensureTenantBound(req: Request): void {
+  if (config.mockMode) return;
+  const tenantId = getSessionTenantId(req);
+  if (!tenantId) {
+    throw new Error('Session is missing tenant context. Sign in again.');
+  }
+}
+
+async function getScopedData(req: Request) {
+  ensureTenantBound(req);
+  return getViewData(req.session?.accessToken);
+}
+
+async function assertKnownDeviceId(req: Request, deviceId: string): Promise<void> {
+  const data = await getScopedData(req);
+  const exists = data.devices.some((device) => device.id === deviceId);
+  if (!exists) {
+    throw new Error('Unknown device or device not accessible in this tenant context.');
+  }
+}
+
+async function assertKnownIncidentSignature(req: Request, signature: string): Promise<void> {
+  const data = await getScopedData(req);
+  const exists = data.incidents.some((incident) => !incident.isPlaceholder && incident.signature === signature);
+  if (!exists) {
+    throw new Error('Unknown incident or incident not accessible in this tenant context.');
+  }
+}
+
+
+async function mergeIncidentWorkflows(rows: IncidentRow[]): Promise<IncidentRow[]> {
+  const workflows = await incidentRepo.listWorkflows().catch(() => []);
+  const workflowMap = new Map(workflows.map((workflow) => [workflow.signature, workflow]));
+
+  return rows.map((row) => {
+    const workflow = workflowMap.get(row.signature);
+    if (!workflow) return row;
+    return {
+      ...row,
+      owner: workflow.owner,
+      status: workflow.status,
+      notes: workflow.notes,
+      workflowUpdatedAt: workflow.updatedAt
+    };
+  });
+}
+
+function ensureConnected(req: Request, res: Response, next: NextFunction): void {
+  if (config.mockMode || req.session?.accessToken) return next();
+  res.status(401).json({ message: 'Not connected. Click Connect first.' });
+}
+
+async function getViewData(accessToken?: string) {
+  const bundle = await getDataBundle(accessToken);
+
+  // Normalize app status rows (if any)
+  const statuses = [] as typeof bundle.appStatuses;
+  for (const row of bundle.appStatuses ?? []) {
+    const normalized = await normalizeStatus(row);
+    statuses.push({
+      ...row,
+      normalizedCategory: normalized.normalizedCategory,
+      cause: normalized.cause,
+      confidence: normalized.confidence,
+      recommendedActions: normalized.recommendedActions
+    });
+  }
+
+  // Build + persist incidents (best effort)
+  const incidents = buildIncidents(statuses);
+  try {
+    await incidentRepo.upsertMany(incidents);
+  } catch (error) {
+    logger.warn({ err: error }, 'Incident persistence failed; continuing with in-memory incidents.');
+  }
+
+  return {
+    apps: bundle.apps ?? [],
+    devices: bundle.devices ?? [],
+    users: bundle.users ?? [],
+    statuses,
+    incidents
+  };
+}
+
+function buildDashboard(data: Awaited<ReturnType<typeof getViewData>>): DashboardData {
+  const windowsDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('windows'));
+  const linuxDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('linux'));
+
+  const mobileDevices = data.devices.filter((d) => {
+    const os = (d.operatingSystem ?? '').toLowerCase();
+    return os.includes('ios') || os.includes('android') || os.includes('ipados');
+  });
+
+  const macDevices = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('mac'));
+
+  const compliantDevices = data.devices.filter((d) => (d.complianceState ?? '').toLowerCase() === 'compliant');
+  const nonCompliantDevices = data.devices.filter((d) => (d.complianceState ?? '').toLowerCase().includes('non'));
+  const userDriven = windowsDevices.filter((d) => (d.userPrincipalName ?? '').includes('@'));
+  const automatic = windowsDevices.filter((d) => !(d.userPrincipalName ?? '').includes('@'));
+
+  const stale = data.devices.filter((d) => {
+    const stamp = Date.parse(d.lastSyncDateTime ?? '');
+    if (Number.isNaN(stamp)) return false;
+    return (Date.now() - stamp) / (1000 * 60 * 60 * 24) > 7;
+  }).length;
+
+  const activeIncidents = data.incidents.filter((incident) => !incident.isPlaceholder);
+  const activeCriticalIssues = activeIncidents.filter((incident) => incident.severity === 'Critical' || incident.priority === 'P1').length;
+  const readinessRisks = stale + nonCompliantDevices.length + activeCriticalIssues;
+  const complianceRate = data.devices.length > 0 ? compliantDevices.length / data.devices.length : 1;
+  const incidentPenalty = Math.min(30, activeIncidents.length * 6 + activeCriticalIssues * 8);
+  const readinessPenalty = Math.min(20, readinessRisks * 1.5);
+  const healthScore = Math.max(0, Math.min(100, Math.round(complianceRate * 100 - incidentPenalty - readinessPenalty + 20)));
+
+  const causeMap = new Map<string, number>();
+  for (const incident of activeIncidents) {
+    causeMap.set(incident.normalizedCategory, (causeMap.get(incident.normalizedCategory) ?? 0) + incident.impactedCount);
+  }
+  const topRootCauses = Array.from(causeMap.entries())
+    .map(([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  const recommendedActions: DashboardAction[] = [];
+  if (activeCriticalIssues > 0) {
+    recommendedActions.push({
+      title: `Investigate ${activeCriticalIssues} critical issue${activeCriticalIssues > 1 ? 's' : ''}`,
+      rationale: 'P1 or critical incidents are active and should be triaged first.',
+      targetView: 'incidents',
+      severity: 'critical'
+    });
+  }
+  if (stale > 0) {
+    recommendedActions.push({
+      title: `Review ${stale} stale device${stale > 1 ? 's' : ''}`,
+      rationale: 'Devices that have not synced for over 7 days often hide enrollment drift or policy gaps.',
+      targetView: 'windowsEnrollment',
+      severity: 'warn'
+    });
+  }
+  if (nonCompliantDevices.length > 0) {
+    recommendedActions.push({
+      title: `Focus on ${nonCompliantDevices.length} non-compliant device${nonCompliantDevices.length > 1 ? 's' : ''}`,
+      rationale: 'Compliance failures directly reduce rollout readiness and user trust.',
+      targetView: 'reports',
+      severity: 'warn'
+    });
+  }
+  if (recommendedActions.length === 0) {
+    recommendedActions.push({
+      title: 'Environment looks stable',
+      rationale: 'No critical issues were detected in the current rolling window.',
+      targetView: 'reports',
+      severity: 'info'
+    });
+  }
+
+  return {
+    totalDevices: data.devices.length,
+    windowsEnrollmentDevices: windowsDevices.length,
+    linuxEnrollmentDevices: linuxDevices.length,
+    autopilotUserDrivenDevices: userDriven.length,
+    autopilotAutomaticDevices: automatic.length,
+    mobileEnrollmentDevices: mobileDevices.length,
+    macEnrollmentDevices: macDevices.length,
+    topEnrollmentStates: [
+      { category: 'Compliant', count: compliantDevices.length },
+      { category: 'Non-compliant', count: nonCompliantDevices.length },
+      { category: 'Stale Sync (>7 days)', count: stale }
+    ],
+    healthScore,
+    activeCriticalIssues,
+    activeIssues: activeIncidents.length,
+    readinessRisks,
+    staleDevices: stale,
+    recommendedActions,
+    topRootCauses,
+    lastRefresh: new Date().toISOString()
+  };
+}
+
+function buildWindowsEnrollmentGrid(data: Awaited<ReturnType<typeof getViewData>>) {
+  return data.devices
+    .filter((device) => (device.operatingSystem ?? '').toLowerCase().includes('windows'))
+    .map((device) => ({
+    id: device.id,
+    deviceName: device.deviceName,
+    operatingSystem: device.operatingSystem,
+    osVersion: device.osVersion,
+    complianceState: device.complianceState,
+    lastSyncDateTime: device.lastSyncDateTime,
+    userPrincipalName: device.userPrincipalName,
+    details: `Device: ${device.deviceName}\nOS: ${device.operatingSystem} ${device.osVersion}\nCompliance: ${device.complianceState}\nLast Sync: ${device.lastSyncDateTime}`
+    }));
+}
+
+function buildLinuxEnrollmentGrid(data: Awaited<ReturnType<typeof getViewData>>) {
+  return data.devices
+    .filter((device) => (device.operatingSystem ?? '').toLowerCase().includes('linux'))
+    .map((device) => ({
+      id: device.id,
+      deviceName: device.deviceName,
+      operatingSystem: device.operatingSystem,
+      osVersion: device.osVersion,
+      complianceState: device.complianceState,
+      lastSyncDateTime: device.lastSyncDateTime,
+      userPrincipalName: device.userPrincipalName,
+      details: `Device: ${device.deviceName}\nOS: ${device.operatingSystem} ${device.osVersion}\nCompliance: ${device.complianceState}\nLast Sync: ${device.lastSyncDateTime}`
+    }));
+}
+
+function buildAutopilotAllGrid(data: Awaited<ReturnType<typeof getViewData>>) {
+  return data.devices.map((device) => ({
+    id: device.id,
+    serialNumber: device.serialNumber ?? '-',
+    deviceName: device.deviceName,
+    userPrincipalName: device.userPrincipalName || '-',
+    joinType: device.joinType ?? 'unknown',
+    enrollmentType: device.deviceEnrollmentType ?? 'unknown',
+    complianceState: device.complianceState,
+    lastSyncDateTime: device.lastSyncDateTime,
+    details: `Device: ${device.deviceName}\nUPN: ${device.userPrincipalName || '-'}\nJoin Type: ${device.joinType ?? 'unknown'}\nEnrollment Type: ${device.deviceEnrollmentType ?? 'unknown'}`
+  }));
+}
+
+function buildAutopilotUserDrivenGrid(data: Awaited<ReturnType<typeof getViewData>>) {
+  return buildAutopilotAllGrid(data).filter((row) => String(row.userPrincipalName).includes('@'));
+}
+
+function buildAutopilotPreProvisioningGrid(data: Awaited<ReturnType<typeof getViewData>>) {
+  return buildAutopilotAllGrid(data).filter((row) => !String(row.userPrincipalName).includes('@'));
+}
+
+function buildOcrGrid(data: Awaited<ReturnType<typeof getViewData>>) {
+  const rows = data.statuses.map((row) => ({
+    id: row.id,
+    appName: row.appName,
+    targetName: row.targetName,
+    normalizedCategory: row.normalizedCategory || 'Unknown',
+    confidence: row.confidence,
+    errorCode: row.errorCode || 'Unknown',
+    errorDescription: row.errorDescription || 'Unknown',
+    cause: row.cause || 'Unknown',
+    recommendedActions: (row.recommendedActions ?? []).join(' | '),
+    details: `App: ${row.appName}\nTarget: ${row.targetName}\nCategory: ${row.normalizedCategory || 'Unknown'}\nCause: ${row.cause || 'Unknown'}\nConfidence: ${row.confidence}`
+  }));
+
+  if (rows.length > 0) return rows;
+
+  // Fallback: show device baseline if app status telemetry is empty
+  const deviceFallback = data.devices.slice(0, 200).map((device) => ({
+    id: `device-ocr:${device.id}`,
+    appName: 'Device Compliance Baseline',
+    targetName: device.deviceName,
+    normalizedCategory: (device.complianceState ?? '').toLowerCase() === 'compliant' ? 'DeviceHealth' : 'ComplianceRisk',
+    confidence: (device.complianceState ?? '').toLowerCase() === 'compliant' ? 0.45 : 0.7,
+    errorCode: (device.complianceState ?? '').toLowerCase() === 'compliant' ? '-' : 'DEVICE_NONCOMPLIANT',
+    errorDescription: (device.complianceState ?? '').toLowerCase() === 'compliant' ? 'Compliant device baseline signal.' : 'Non-compliant device signal from managedDevices.',
+    cause: (device.complianceState ?? '').toLowerCase() === 'compliant'
+      ? 'Device is reporting compliant state; app-level telemetry is not currently available.'
+      : `Device reports ${device.complianceState} compliance state.`,
+    recommendedActions: (device.complianceState ?? '').toLowerCase() === 'compliant'
+      ? 'Assign at least one required app and wait for Intune status telemetry to populate.'
+      : 'Open device in Intune and review compliance policies and recent check-in.',
+    details: `Device: ${device.deviceName}\nCompliance: ${device.complianceState}\nOS: ${device.operatingSystem} ${device.osVersion}\nLast Sync: ${device.lastSyncDateTime}`
+  }));
+
+  return deviceFallback.length
+    ? deviceFallback
+    : [{
+      id: 'ocr-empty',
+      appName: 'No OCR telemetry yet',
+      targetName: '-',
+      normalizedCategory: 'DataUnavailable',
+      confidence: 0,
+      errorCode: '-',
+      errorDescription: 'No app installation status rows were returned from Graph.',
+      cause: 'Either there are currently no app status events, or delegated permissions are not sufficient.',
+      recommendedActions: 'Grant admin consent for required Graph delegated permissions and refresh again.',
+      details: 'OCR needs app status telemetry. Verify Microsoft Graph delegated permissions and Intune app status availability.'
+    }];
+}
+
+function buildPermissionCheck(req: Request) {
+  const token = req.session?.accessToken;
+  return [{
+    id: 'permission-check',
+    connected: Boolean(token),
+    mockMode: config.mockMode,
+    configuredScopes: (config.entra?.scopes ?? []).join(' '),
+    recommendedScopes: 'openid profile offline_access User.Read Directory.Read.All DeviceManagementManagedDevices.Read.All DeviceManagementApps.Read.All DeviceManagementServiceConfig.Read.All',
+    details:
+      `Configured scopes:\n${(config.entra?.scopes ?? []).join(' ')}\n\n` +
+      `Recommended (Intune enrollment + app status):\n` +
+      `DeviceManagementManagedDevices.Read.All\nDeviceManagementApps.Read.All\nDeviceManagementServiceConfig.Read.All\nDirectory.Read.All\n\n` +
+      `Remember: delegated permissions require admin consent in Entra ID.`
+  }];
+}
+
+function buildEnrollmentErrorCatalog() {
+  return enrollmentErrorCatalog;
+}
+
+function buildReportData(data: Awaited<ReturnType<typeof getViewData>>, upn: string, tenantId: string): ReportData {
+  const windows = data.devices.filter(d => (d.operatingSystem ?? '').toLowerCase().includes('windows'));
+  const mac     = data.devices.filter(d => (d.operatingSystem ?? '').toLowerCase().includes('mac'));
+  const ios     = data.devices.filter(d => { const o = (d.operatingSystem ?? '').toLowerCase(); return o.includes('ios') || o.includes('ipados'); });
+  const android = data.devices.filter(d => (d.operatingSystem ?? '').toLowerCase().includes('android'));
+
+  const compliantOf = (arr: typeof data.devices) => arr.filter(d => (d.complianceState ?? '').toLowerCase() === 'compliant').length;
+  const scoreOf = (arr: typeof data.devices): number => {
+    if (!arr.length) return 0;
+    return Math.round((compliantOf(arr) / arr.length) * 100);
+  };
+
+  const platformBreakdown: PlatformBreakdown[] = [
+    { platform: 'Windows', count: windows.length, compliant: compliantOf(windows), nonCompliant: windows.length - compliantOf(windows) },
+    { platform: 'macOS',   count: mac.length,     compliant: compliantOf(mac),     nonCompliant: mac.length - compliantOf(mac) },
+    { platform: 'iOS',     count: ios.length,     compliant: compliantOf(ios),     nonCompliant: ios.length - compliantOf(ios) },
+    { platform: 'Android', count: android.length, compliant: compliantOf(android), nonCompliant: android.length - compliantOf(android) },
+  ].filter(p => p.count > 0);
+
+  const healthScores: HealthScore[] = platformBreakdown.map(p => ({
+    platform: p.platform,
+    score: p.count > 0 ? Math.round((p.compliant / p.count) * 100) : 0,
+    trend: 'stable' as const,
+    enrolled: p.count,
+    compliant: p.compliant,
+    total: p.count
+  }));
+
+  // Top errors from incidents
+  const topErrors: TopErrorEntry[] = data.incidents
+    .filter(i => !i.isPlaceholder)
+    .sort((a, b) => b.impactedCount - a.impactedCount)
+    .slice(0, 5)
+    .map(i => ({
+      errorCode: i.errorCode || i.normalizedCategory,
+      title: i.summary || i.normalizedCategory,
+      count: i.impactedCount,
+      severity: i.severity
+    }));
+
+  const totalCompliant = compliantOf(data.devices);
+  const overallRate = data.devices.length > 0 ? Math.round((totalCompliant / data.devices.length) * 100) : 0;
+  const totalDevices = data.devices.length;
+  const activeIncidents = data.incidents.filter(i => !i.isPlaceholder).length;
+
+  // Synthetic 7-day trend from incidents (grouped by lastSeen date)
+  const trendMap = new Map<string, number>();
+  for (const inc of data.incidents.filter(i => !i.isPlaceholder)) {
+    const day = (inc.lastSeen ?? '').slice(0, 10);
+    if (day) trendMap.set(day, (trendMap.get(day) ?? 0) + inc.impactedCount);
+  }
+  const enrollmentTrend = Array.from(trendMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-7)
+    .map(([date, count]) => ({ date, count }));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    tenantId: tenantId || '',
+    tenantUpn: upn || '',
+    totalDevices,
+    overallComplianceRate: overallRate,
+    activeIncidents,
+    platformBreakdown,
+    topErrors,
+    healthScores,
+    enrollmentTrend,
+    executiveSummary: {
+      openIncidents: activeIncidents,
+      resolvedIncidents: 0,
+      slaBreached: 0,
+      slaAtRisk: 0,
+      topFailureCauses: topErrors.slice(0, 5).map((item) => ({
+        title: item.title,
+        category: item.errorCode || 'Unknown',
+        impacted: item.count
+      }))
+    }
+  };
+}
+
+function buildChecklist(data: Awaited<ReturnType<typeof getViewData>>, scenario: ChecklistScenario): ChecklistItem[] {
+  const hasWindows  = data.devices.some(d => (d.operatingSystem ?? '').toLowerCase().includes('windows'));
+  const hasMac      = data.devices.some(d => (d.operatingSystem ?? '').toLowerCase().includes('mac'));
+  const hasIos      = data.devices.some(d => { const o = (d.operatingSystem ?? '').toLowerCase(); return o.includes('ios') || o.includes('ipados'); });
+  const hasAndroid  = data.devices.some(d => (d.operatingSystem ?? '').toLowerCase().includes('android'));
+  const hasDevices  = data.devices.length > 0;
+  const hasIncidents = data.incidents.some(i => !i.isPlaceholder);
+
+  const pass  = (label: string, cat: string, desc: string, detail: string, doc: string): ChecklistItem =>
+    ({ id: `${scenario}-${label}`, category: cat, label, description: desc, status: 'pass', detail, docUrl: doc });
+  const warn  = (label: string, cat: string, desc: string, detail: string, doc: string): ChecklistItem =>
+    ({ id: `${scenario}-${label}`, category: cat, label, description: desc, status: 'warn', detail, docUrl: doc });
+  const manual = (label: string, cat: string, desc: string, detail: string, doc: string): ChecklistItem =>
+    ({ id: `${scenario}-${label}`, category: cat, label, description: desc, status: 'manual', detail, docUrl: doc });
+
+  if (scenario === 'autopilot') return [
+    hasWindows ? pass('Windows Devices Detected', 'Devices', 'Windows devices are present in tenant', `${data.devices.filter(d=>(d.operatingSystem??'').toLowerCase().includes('windows')).length} Windows devices found`, 'https://learn.microsoft.com/autopilot') : warn('Windows Devices Detected', 'Devices', 'No Windows devices found in tenant', 'Ensure devices are enrolled before testing Autopilot', 'https://learn.microsoft.com/autopilot'),
+    manual('Hardware Hash Uploaded', 'Registration', 'Device hardware hashes imported into Intune', 'Check Devices > Windows > Enrollment > Devices (Autopilot)', 'https://learn.microsoft.com/autopilot/add-devices'),
+    manual('Autopilot Profile Assigned', 'Profile', 'Deployment profile assigned to device or group', 'Check Devices > Windows > Enrollment > Deployment Profiles', 'https://learn.microsoft.com/autopilot/profiles'),
+    manual('ESP Profile Configured', 'Profile', 'Enrollment Status Page profile assigned', 'Check Devices > Windows > Enrollment > Enrollment Status Page', 'https://learn.microsoft.com/intune/enrollment/windows-enrollment-status'),
+    manual('MDM User Scope Configured', 'Licensing', 'MDM User Scope set to All or target group', 'Check Entra ID > Mobility > Microsoft Intune > MDM User Scope', 'https://learn.microsoft.com/intune/enrollment/windows-enroll'),
+    manual('Intune License Assigned', 'Licensing', 'Users have Intune or M365 license', 'Check M365 Admin Center > Users > Active users > Licenses', 'https://learn.microsoft.com/intune/fundamentals/licenses'),
+    hasIncidents ? warn('No Active Incidents', 'Health', 'Check for active enrollment incidents', `${data.incidents.filter(i=>!i.isPlaceholder).length} active incidents detected`, 'https://learn.microsoft.com/intune/enrollment/troubleshoot-windows-enrollment-errors') : pass('No Active Incidents', 'Health', 'No active enrollment incidents', 'System appears healthy', 'https://learn.microsoft.com/intune/enrollment/troubleshoot-windows-enrollment-errors'),
+    manual('Network Endpoints Reachable', 'Network', 'Required Microsoft endpoints accessible', 'Verify *.manage.microsoft.com, *.microsoftonline.com, *.windowsupdate.com', 'https://learn.microsoft.com/intune/fundamentals/intune-endpoints'),
+    manual('DNS CNAME Configured', 'Network', 'EnterpriseEnrollment CNAME record exists', 'nslookup EnterpriseEnrollment.<yourdomain>', 'https://learn.microsoft.com/intune/enrollment/windows-enrollment-create-cname'),
+    manual('Conditional Access Reviewed', 'Security', 'CA policies allow initial enrollment', 'Temporarily exclude users from device compliance CA during first enrollment', 'https://learn.microsoft.com/intune/protect/conditional-access'),
+  ];
+
+  if (scenario === 'ade-ios') return [
+    hasIos ? pass('iOS Devices Present', 'Devices', 'iOS/iPadOS devices found in tenant', `${data.devices.filter(d=>{const o=(d.operatingSystem??'').toLowerCase();return o.includes('ios')||o.includes('ipados');}).length} devices`, 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-ios') : warn('iOS Devices Present', 'Devices', 'No iOS devices found yet', 'Enroll test device to validate pipeline', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-ios'),
+    manual('Apple Business Manager Configured', 'ABM', 'ABM account linked to Intune tenant', 'Check Tenant administration > Apple > Enrollment program tokens', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-ios'),
+    manual('ADE Token Not Expired', 'ABM', 'Enrollment program token is valid', 'Token expires annually — check expiry date in Intune', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-ios'),
+    manual('Device Synced from ABM', 'ABM', 'Device serial visible in Intune after ABM sync', 'Devices > iOS/iPadOS > Enrollment program tokens > Sync', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-ios'),
+    manual('ADE Enrollment Profile Assigned', 'Profile', 'Enrollment profile assigned to device in Intune', 'Devices > iOS/iPadOS > Enrollment program tokens > Profiles', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-ios'),
+    manual('APNs Certificate Valid', 'Certificates', 'Apple MDM Push Certificate not expired', 'Tenant administration > Apple MDM Push certificate', 'https://learn.microsoft.com/intune/enrollment/apple-mdm-push-certificate-get'),
+    manual('Network Access to Apple Endpoints', 'Network', 'Device can reach apple.com endpoints', 'Verify albert.apple.com, gdmf.apple.com, *.push.apple.com reachable on TCP 443', 'https://support.apple.com/en-us/101555'),
+    manual('Intune License Assigned to Users', 'Licensing', 'Users have Intune license', 'Check M365 Admin Center > Users > Active users > Licenses', 'https://learn.microsoft.com/intune/fundamentals/licenses'),
+    hasIncidents ? warn('No Active Incidents', 'Health', 'Check for iOS enrollment incidents', `${data.incidents.filter(i=>!i.isPlaceholder).length} active incidents`, 'https://learn.microsoft.com/intune/enrollment/troubleshoot-ios-enrollment-errors') : pass('No Active Incidents', 'Health', 'No active iOS incidents', 'System appears healthy', 'https://learn.microsoft.com/intune/enrollment/troubleshoot-ios-enrollment-errors'),
+  ];
+
+  if (scenario === 'ade-macos') return [
+    hasMac ? pass('macOS Devices Present', 'Devices', 'macOS devices found in tenant', `${data.devices.filter(d=>(d.operatingSystem??'').toLowerCase().includes('mac')).length} devices`, 'https://learn.microsoft.com/intune/enrollment/macos-enroll') : warn('macOS Devices Present', 'Devices', 'No macOS devices found yet', 'Enroll test Mac to validate pipeline', 'https://learn.microsoft.com/intune/enrollment/macos-enroll'),
+    manual('Apple Business Manager Configured', 'ABM', 'ABM account linked to Intune', 'Check Tenant administration > Apple > Enrollment program tokens', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-macos'),
+    manual('macOS ADE Token Valid', 'ABM', 'macOS enrollment token not expired', 'Check token expiry in Intune — renew 30 days before expiry', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-macos'),
+    manual('Mac Serial Synced from ABM', 'ABM', 'Mac serial visible in Intune after sync', 'Devices > macOS > Enrollment program tokens > Sync', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-macos'),
+    manual('macOS ADE Enrollment Profile Assigned', 'Profile', 'Enrollment profile assigned to Mac in Intune', 'Include Setup Assistant screens and MDM settings', 'https://learn.microsoft.com/intune/enrollment/device-enrollment-program-enroll-macos'),
+    manual('APNs Certificate Valid', 'Certificates', 'Apple MDM Push Certificate not expired', 'Tenant administration > Apple MDM Push certificate', 'https://learn.microsoft.com/intune/enrollment/apple-mdm-push-certificate-get'),
+    manual('macOS Compliance Policy Assigned', 'Policy', 'Compliance policy targeting macOS devices', 'Devices > macOS > Compliance policies', 'https://learn.microsoft.com/intune/protect/compliance-policy-create-mac-os'),
+    manual('Network Access to Apple Endpoints', 'Network', 'Mac can reach Apple/Intune endpoints', 'albert.apple.com, gdmf.apple.com, *.manage.microsoft.com on TCP 443', 'https://support.apple.com/en-us/101555'),
+    hasIncidents ? warn('No Active Incidents', 'Health', 'Check for macOS incidents', `${data.incidents.filter(i=>!i.isPlaceholder).length} active incidents`, 'https://learn.microsoft.com/intune/enrollment/macos-enroll') : pass('No Active Incidents', 'Health', 'No active macOS incidents', 'System appears healthy', 'https://learn.microsoft.com/intune/enrollment/macos-enroll'),
+  ];
+
+  // android-enterprise
+  return [
+    hasAndroid ? pass('Android Devices Present', 'Devices', 'Android devices found in tenant', `${data.devices.filter(d=>(d.operatingSystem??'').toLowerCase().includes('android')).length} devices`, 'https://learn.microsoft.com/intune/enrollment/android-work-profile-enroll') : warn('Android Devices Present', 'Devices', 'No Android devices found yet', 'Enroll test device to validate', 'https://learn.microsoft.com/intune/enrollment/android-work-profile-enroll'),
+    manual('Managed Google Play Linked', 'Google', 'Managed Google Play enterprise account linked to Intune', 'Tenant administration > Android > Managed Google Play', 'https://learn.microsoft.com/intune/enrollment/android-work-profile-enroll'),
+    manual('Android Enterprise Enrollment Type Selected', 'Profile', 'Work Profile, Fully Managed, or Dedicated device configured', 'Devices > Android > Enrollment profiles', 'https://learn.microsoft.com/intune/enrollment/android-fully-managed-enroll'),
+    manual('Enrollment Restriction Allows Android', 'Policy', 'Device type restriction allows Android Enterprise', 'Devices > Enrollment restrictions > Device type restrictions', 'https://learn.microsoft.com/intune/enrollment/enrollment-restrictions-set'),
+    manual('Google Play Services Updated on Device', 'Device', 'Google Play Services is up to date', 'Settings > Apps > Google Play Services > version check', 'https://learn.microsoft.com/intune/enrollment/android-work-profile-enroll'),
+    manual('Device is Play Protect Certified', 'Device', 'Device passes Google Play Protect certification', 'Settings > Security > Play Protect certification', 'https://learn.microsoft.com/intune/enrollment/android-work-profile-enroll'),
+    manual('Company Portal Installed', 'Apps', 'Company Portal app available on device', 'Managed Google Play > search Company Portal > assign', 'https://learn.microsoft.com/intune/user-help/enroll-device-android-company-portal'),
+    manual('Intune License Assigned', 'Licensing', 'Users have Intune license', 'Check M365 Admin Center > Users > Active users > Licenses', 'https://learn.microsoft.com/intune/fundamentals/licenses'),
+    hasIncidents ? warn('No Active Incidents', 'Health', 'Check for Android incidents', `${data.incidents.filter(i=>!i.isPlaceholder).length} active incidents`, 'https://learn.microsoft.com/intune/enrollment/troubleshoot-android-enrollment') : pass('No Active Incidents', 'Health', 'No active Android incidents', 'System appears healthy', 'https://learn.microsoft.com/intune/enrollment/troubleshoot-android-enrollment'),
+    manual('Network – FCM Reachable', 'Network', 'Firebase Cloud Messaging not blocked by firewall', 'fcm.googleapis.com on TCP 443 must be reachable', 'https://firebase.google.com/docs/cloud-messaging'),
+  ];
+}
+
+
+async function graphPostAction(accessToken: string, path: string): Promise<void> {
+  const response = await fetch(`https://graph.microsoft.com${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (response.ok || response.status === 204 || response.status === 202) return;
+  const text = await response.text();
+  throw new Error(`Graph action failed (${response.status}) on ${path}: ${text || response.statusText}`);
+}
+
+function requireWriteToken(req: Request): string {
+  ensureTenantBound(req);
+  const session = req.session as any;
+  const token = session?.writeAccessToken;
+  if (!token || session?.hasWritePermissions !== true) {
+    throw new Error('Write access is required for this action. Re-authenticate with elevated permissions.');
+  }
+  return token;
+}
+
+async function explainOcrText(text: string) {
+  const trimmed = text.trim();
+  const fakeRow: AppStatusRow = {
+    id: 'ocr-explain',
+    appId: 'ocr-explain',
+    appName: 'OCR Assistant',
+    targetType: 'device',
+    targetId: 'ocr-input',
+    targetName: 'OCR Input',
+    installState: 'unknown',
+    errorCode: (trimmed.match(/(?:error code|code)[:\s-]*([0-9a-zx-]+)/i)?.[1] ?? 'Unknown').toUpperCase(),
+    errorDescription: trimmed.slice(0, 4000),
+    lastReportedDateTime: new Date().toISOString(),
+    normalizedCategory: '',
+    cause: '',
+    confidence: 0,
+    recommendedActions: []
+  };
+
+  const normalized = await normalizeStatus(fakeRow);
+  return {
+    category: normalized.normalizedCategory,
+    confidence: normalized.confidence,
+    cause: normalized.cause,
+    recommendedActions: normalized.recommendedActions
+  };
+}
+
+export const apiRouter = Router();
+apiRouter.use(ensureConnected);
+
+apiRouter.post('/ocr/explain', async (req, res) => {
+  const text = typeof req.body?.text === 'string' ? req.body.text : '';
+  if (!text.trim()) return res.status(400).json({ message: 'Missing OCR text.' });
+  try {
+    const explanation = await explainOcrText(text);
+    return res.json(explanation);
+  } catch (error: any) {
+    return res.status(500).json({ message: error?.message ?? 'OCR explanation failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/sync', async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId);
+    await assertKnownDeviceId(req, deviceId);
+    const token = requireWriteToken(req);
+    await graphPostAction(token, `/v1.0/deviceManagement/managedDevices/${encodeURIComponent(deviceId)}/syncDevice`);
+    return res.json({ success: true, message: 'Sync command sent.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Sync failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/reboot', async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId);
+    await assertKnownDeviceId(req, deviceId);
+    const token = requireWriteToken(req);
+    await graphPostAction(token, `/v1.0/deviceManagement/managedDevices/${encodeURIComponent(deviceId)}/rebootNow`);
+    return res.json({ success: true, message: 'Reboot command sent.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Reboot failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/autopilotReset', async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId);
+    await assertKnownDeviceId(req, deviceId);
+    const token = requireWriteToken(req);
+    await graphPostAction(token, `/beta/deviceManagement/managedDevices/${encodeURIComponent(deviceId)}/cleanWindowsDevice`);
+    return res.json({ success: true, message: 'Autopilot Reset command sent.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Autopilot Reset failed.' });
+  }
+});
+
+apiRouter.post('/devices/bulk', async (req, res) => {
+  const parsed = bulkDeviceActionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Invalid bulk request.' });
+  }
+  const { deviceIds, action } = parsed.data;
+  try {
+    const data = await getScopedData(req);
+    const allowedIds = new Set(data.devices.map((device) => device.id));
+    const unknownIds = deviceIds.filter((id) => !allowedIds.has(id));
+    if (unknownIds.length > 0) {
+      return res.status(403).json({ success: false, message: 'One or more devices are not accessible in this tenant context.' });
+    }
+    const token = requireWriteToken(req);
+    const results = [];
+    for (const id of deviceIds) {
+      try {
+        if (action === 'sync') await graphPostAction(token, `/v1.0/deviceManagement/managedDevices/${encodeURIComponent(id)}/syncDevice`);
+        else if (action === 'reboot') await graphPostAction(token, `/v1.0/deviceManagement/managedDevices/${encodeURIComponent(id)}/rebootNow`);
+        else await graphPostAction(token, `/beta/deviceManagement/managedDevices/${encodeURIComponent(id)}/cleanWindowsDevice`);
+        results.push({ id, ok: true });
+      } catch (error: any) {
+        results.push({ id, ok: false, error: error?.message ?? 'Action failed.' });
+      }
+    }
+    return res.json({ success: results.every((r:any)=>r.ok), results });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Bulk action failed.' });
+  }
+});
+
+
+apiRouter.get('/incidents/workflows', async (_req, res) => {
+  try {
+    const rows = await incidentRepo.listWorkflows();
+    return res.json({ rows });
+  } catch (error) {
+    logger.warn({ err: error }, 'Workflow store unavailable; returning empty workflow set.');
+    return res.json({ rows: [] });
+  }
+});
+
+apiRouter.post('/incidents/:signature/workflow', async (req, res) => {
+  const signature = String(req.params.signature ?? '').trim();
+  if (!signature) return res.status(400).json({ message: 'Missing incident signature.' });
+
+  const parsed = workflowSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ message: 'Invalid workflow payload.' });
+  }
+
+  try {
+    await assertKnownIncidentSignature(req, signature);
+    const row = await incidentRepo.upsertWorkflow({
+      signature,
+      owner: parsed.data.owner || 'Unassigned',
+      status: parsed.data.status,
+      notes: parsed.data.notes
+    });
+    return res.json(row);
+  } catch (error) {
+    return res.status(500).json({ message: error instanceof Error ? error.message : 'Failed to save workflow.' });
+  }
+});
+
+apiRouter.get('/refresh', async (req, res) => {
+  try {
+    await getViewData(req.session.accessToken);
+    res.json({ message: 'Refresh completed.' });
+  } catch (error) {
+    res.status(500).json({ message: error instanceof Error ? error.message : 'Refresh failed.' });
+  }
+});
+
+apiRouter.get('/view/:view', async (req, res) => {
+  try {
+    const view = String(req.params.view) as ViewName;
+
+    if (view === 'permissionCheck') {
+      return res.json({
+        rows: buildPermissionCheck(req),
+        message: 'Permission check loaded.'
+      });
+    }
+
+    if (view === 'settings') {
+      const settings: SettingsData = {
+        incidentWindowMinutes: config.incidentWindowMinutes,
+        incidentThresholdCount: config.incidentThresholdCount,
+        severityThresholds: config.severityThresholds,
+        refreshIntervalSeconds: config.refreshIntervalSeconds,
+        mockMode: config.mockMode
+      };
+      return res.json({ rows: [settings], message: 'Settings loaded.' });
+    }
+
+    if (view === 'enrollmentErrorCatalog') {
+      return res.json({
+        rows: buildEnrollmentErrorCatalog(),
+        message: 'Enrollment Error Catalog loaded.'
+      });
+    }
+
+    const data = await getViewData(req.session.accessToken);
+
+    if (view === 'dashboard') {
+      return res.json({ rows: [buildDashboard(data)], message: 'Command Center loaded.' });
+    }
+    if (view === 'windowsEnrollment') {
+      return res.json({ rows: buildWindowsEnrollmentGrid(data), message: 'Windows Enrollment loaded.' });
+    }
+    if (view === 'linuxEnrollment') {
+      return res.json({ rows: buildLinuxEnrollmentGrid(data), message: 'Linux Enrollment loaded.' });
+    }
+    if (view === 'mobileEnrollment') {
+      const mobileRows = data.devices
+        .filter((d) => {
+          const os = (d.operatingSystem ?? '').toLowerCase();
+          return os.includes('ios') || os.includes('android') || os.includes('ipados');
+        })
+        .map((d) => ({
+          id: d.id,
+          deviceName: d.deviceName,
+          operatingSystem: d.operatingSystem,
+          osVersion: d.osVersion,
+          complianceState: d.complianceState,
+          lastSyncDateTime: d.lastSyncDateTime,
+          userDisplayName: d.userDisplayName,
+          userPrincipalName: d.userPrincipalName,
+          details: `Device: ${d.deviceName}
+OS: ${d.operatingSystem} ${d.osVersion}
+Compliance: ${d.complianceState}
+UPN: ${d.userPrincipalName || '-'}
+Last Sync: ${d.lastSyncDateTime}`
+        }));
+      return res.json({ rows: mobileRows, message: 'Mobile Enrollment loaded.' });
+    }
+    if (view === 'macEnrollment') {
+      const macRows = data.devices
+        .filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('mac'))
+        .map((d) => {
+          const enrollType = (d.deviceEnrollmentType ?? '').toLowerCase();
+          const isADE = enrollType.includes('dep') || enrollType.includes('automated') || enrollType.includes('apple');
+          return {
+            id: d.id,
+            deviceName: d.deviceName,
+            osVersion: d.osVersion,
+            enrollmentType: isADE ? 'ADE / DEP' : 'User Enrollment',
+            supervised: isADE,
+            userApproved: !isADE,
+            complianceState: d.complianceState,
+            lastSyncDateTime: d.lastSyncDateTime,
+            userPrincipalName: d.userPrincipalName || '-',
+            serialNumber: d.serialNumber || '-',
+            details: `Device: ${d.deviceName}
+OS: macOS ${d.osVersion}
+Enrollment: ${isADE ? 'ADE / DEP (Supervised)' : 'User Enrollment'}
+Compliance: ${d.complianceState}
+UPN: ${d.userPrincipalName || '-'}
+Serial: ${d.serialNumber || '-'}
+Last Sync: ${d.lastSyncDateTime}`
+          };
+        });
+      const msg = macRows.length === 0
+        ? 'No macOS devices found in tenant.'
+        : `macOS Enrollment loaded — ${macRows.length} device${macRows.length !== 1 ? 's' : ''}.`;
+      return res.json({ rows: macRows, message: msg });
+    }
+    if (view === 'ocr') {
+      return res.json({ rows: buildOcrGrid(data), message: 'OCR loaded.' });
+    }
+    if (view === 'incidents') {
+      const mergedIncidents = await mergeIncidentWorkflows(data.incidents);
+      return res.json({
+        rows: mergedIncidents,
+        message: mergedIncidents[0]?.isPlaceholder ? 'No active incidents in current window.' : 'Incidents loaded.'
+      });
+    }
+    if (view === 'reports') {
+      return res.json({
+        rows: [buildReportData(data, req.session?.account?.username ?? '', req.session?.account?.tenantId ?? '')],
+        message: 'Reports loaded.'
+      });
+    }
+    if (view === 'readinessChecklist') {
+      const scenario = (typeof req.query.scenario === 'string' ? req.query.scenario : 'autopilot') as ChecklistScenario;
+      return res.json({
+        rows: buildChecklist(data, scenario),
+        message: `Readiness checklist for ${scenario} loaded.`
+      });
+    }
+    if (String(req.params.view) === 'auditLogs') {
+      return res.json({ rows: [], message: 'Audit Logs loaded.' });
+    }
+
+    return res.status(400).json({ message: `Unsupported view: ${req.params.view}` });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Failed to load view.';
+    return res.status(500).json({ message: msg });
+  }
+});
+

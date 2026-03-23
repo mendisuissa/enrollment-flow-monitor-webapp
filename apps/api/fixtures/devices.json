@@ -1,0 +1,4 @@
+[
+  { "id": "dev-1", "deviceName": "LAPTOP-100", "operatingSystem": "Windows", "osVersion": "11", "complianceState": "compliant", "lastSyncDateTime": "2026-03-02T08:00:00Z", "userDisplayName": "Alex Doe", "userPrincipalName": "alex@contoso.com" },
+  { "id": "dev-2", "deviceName": "LAPTOP-200", "operatingSystem": "Windows", "osVersion": "10", "complianceState": "noncompliant", "lastSyncDateTime": "2026-03-02T07:00:00Z", "userDisplayName": "Nina Doe", "userPrincipalName": "nina@contoso.com" }
+]

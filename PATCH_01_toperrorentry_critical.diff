@@ -1,0 +1,11 @@
+*** Begin Patch
+*** Update File: packages/shared/src/index.ts
+@@
+ export interface TopErrorEntry {
+   errorCode: string;
+   title: string;
+   count: number;
+-  severity: 'High' | 'Medium' | 'Low';
++  severity: 'Critical' | 'High' | 'Medium' | 'Low';
+ }
+*** End Patch
