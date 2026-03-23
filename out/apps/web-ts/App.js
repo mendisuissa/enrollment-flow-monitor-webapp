@@ -6,10 +6,7 @@ const SAVED_VIEW_STORAGE_KEY = 'efm-saved-views-v1';
 // ── Trial banner ────────────────────────────────────────────────────────────
 const TRIAL_STORAGE_KEY = 'efm-trial-start-v1';
 const TRIAL_DAYS_TOTAL = 30;
-const TRIAL_EXEMPT_EMAILS = [
-    'menahem@365-poc.com',
-    'menahem@modernendpoint.tech',
-];
+const TRIAL_EXEMPT_EMAILS = ['menahem@365-poc.com', 'menahem@modernendpoint.tech'];
 function getTrialDaysLeft(upn) {
     if (TRIAL_EXEMPT_EMAILS.includes(upn.toLowerCase()))
         return Infinity;
@@ -168,7 +165,8 @@ export default function App() {
     const [detailsText, setDetailsText] = useState('');
     const [auth, setAuth] = useState({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
     const [trialBannerDismissed, setTrialBannerDismissed] = useState(false);
-    const isTrialExpired = auth.connected && getTrialDaysLeft(auth.upn) === 0;
+    const [isSubscribed, setIsSubscribed] = useState(false);
+    const isTrialExpired = auth.connected && !isSubscribed && getTrialDaysLeft(auth.upn) === 0;
     const [ocrImageFile, setOcrImageFile] = useState(null);
     const [ocrInputText, setOcrInputText] = useState('');
     const [ocrStatusText, setOcrStatusText] = useState('OCR: Not started');
@@ -238,6 +236,17 @@ export default function App() {
         try {
             const result = await getAuthStatus();
             setAuth(result);
+            // Check subscription status from server
+            if (result.connected) {
+                try {
+                    const subRes = await fetch('/api/subscription/status', { credentials: 'include' });
+                    const subData = await subRes.json();
+                    setIsSubscribed(subData.subscribed === true);
+                }
+                catch {
+                    setIsSubscribed(false);
+                }
+            }
             return result;
         }
         catch {
@@ -1608,6 +1617,8 @@ export default function App() {
                 const daysLeft = getTrialDaysLeft(auth.upn);
                 if (daysLeft === Infinity)
                     return null; // exempt user — no banner
+                if (isSubscribed)
+                    return null; // paid subscriber — no banner
                 if (trialBannerDismissed && daysLeft > 0)
                     return null; // dismissed (not expired)
                 const isUrgent = daysLeft > 0 && daysLeft <= 7;
@@ -1623,7 +1634,7 @@ export default function App() {
                                 border: `1px solid ${color}44`, background: `${color}14`, flexShrink: 0 }, children: [_jsx("div", { style: { width: 5, height: 5, borderRadius: '50%', background: color,
                                         animation: isUrgent ? 'efm-blink 1s ease-in-out infinite' : 'none' } }), _jsx("span", { style: { fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', color, textTransform: 'uppercase' }, children: isExpired ? 'Trial Ended' : isUrgent ? 'Expiring Soon' : 'Trial Active' })] }), _jsx("span", { style: { color: '#94a3b8', whiteSpace: 'nowrap' }, children: isExpired
                                 ? _jsxs(_Fragment, { children: [_jsx("b", { style: { color: '#e2e8f0', fontWeight: 500 }, children: auth.upn }), " \u2014 trial ended, upgrade to restore access"] })
-                                : _jsxs(_Fragment, { children: ["Signed in: ", auth.upn, " \u00A0\u00B7\u00A0 ", _jsxs("b", { style: { color, fontWeight: 500 }, children: [daysLeft, " ", daysLeft === 1 ? 'day' : 'days', " remaining"] })] }) }), !isUrgent && !isExpired && ['All features', 'Export CSV/JSON', 'Full support'].map(f => (_jsxs("span", { style: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#475569' }, children: [_jsx("span", { style: { width: 4, height: 4, borderRadius: '50%', background: '#22c55e', display: 'inline-block' } }), f] }, f))), _jsx("div", { style: { flex: 1 } }), _jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }, children: [_jsx("div", { style: { width: 88, height: 2, background: '#2a2f3d', borderRadius: 99, overflow: 'hidden' }, children: _jsx("div", { style: { width: `${progress}%`, height: '100%', background: color, borderRadius: 99, transition: 'width .4s' } }) }), _jsxs("span", { style: { fontSize: 11, color: '#475569' }, children: [TRIAL_DAYS_TOTAL - Math.min(daysLeft, TRIAL_DAYS_TOTAL), "/", TRIAL_DAYS_TOTAL, " days"] })] }), _jsxs("button", { onClick: () => setUpgradeModalOpen(true), style: {
+                                : _jsxs(_Fragment, { children: ["Signed in: ", auth.upn, " \u00A0\u00B7\u00A0 ", _jsxs("b", { style: { color, fontWeight: 500 }, children: [daysLeft, " ", daysLeft === 1 ? 'day' : 'days', " remaining"] })] }) }), !isUrgent && !isExpired && ['All features', 'Export CSV/JSON', 'Full support'].map(f => (_jsxs("span", { style: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#475569' }, children: [_jsx("span", { style: { width: 4, height: 4, borderRadius: '50%', background: '#22c55e', display: 'inline-block' } }), f] }, f))), _jsx("div", { style: { flex: 1 } }), _jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }, children: [_jsx("div", { style: { width: 88, height: 2, background: '#2a2f3d', borderRadius: 99, overflow: 'hidden' }, children: _jsx("div", { style: { width: `${progress}%`, height: '100%', background: color, borderRadius: 99, transition: 'width .4s' } }) }), _jsxs("span", { style: { fontSize: 11, color: '#475569' }, children: [TRIAL_DAYS_TOTAL - Math.min(daysLeft, TRIAL_DAYS_TOTAL), "/", TRIAL_DAYS_TOTAL, " days"] })] }), _jsxs("button", { onClick: () => window.open('https://mendi46.gumroad.com/l/cynmjz', '_blank'), style: {
                                 padding: '4px 14px', borderRadius: 5, fontSize: 11, fontFamily: 'inherit', fontWeight: 500,
                                 cursor: 'pointer', border: `1px solid ${color}55`, background: `${color}14`, color, flexShrink: 0,
                             }, children: ["\u2191 ", isExpired ? 'Restore Access' : isUrgent ? 'Upgrade Now' : 'Upgrade to Pro'] }), !isExpired && (_jsx("button", { onClick: () => setTrialBannerDismissed(true), style: {
@@ -1646,7 +1657,7 @@ export default function App() {
                                         const confidence = Number(row['rootCauseConfidence'] ?? 0);
                                         const notesText = String(row['notes'] ?? '').trim();
                                         return (_jsxs("button", { className: `fix-card fix-card--maturity fix-card--${getPriorityTone(priority)} ${selected ? 'active' : ''}`, onClick: () => setSelectedIndex(rowIndex), children: [_jsxs("div", { className: "fix-card-top", children: [_jsxs("div", { className: "fix-card-title-wrap", children: [_jsx("span", { className: `queue-badge queue-badge--${getPriorityTone(priority)}`, children: priority }), _jsx("span", { className: `queue-badge queue-badge--${getStatusTone(status)}`, children: status }), _jsx("span", { className: "queue-badge queue-badge--neutral", children: severity }), _jsx("span", { className: `sla-pill ${sla.toLowerCase()}`, children: sla })] }), _jsxs("span", { className: "fix-impact", children: [toText(row['impactedCount']), " impacted"] })] }), _jsxs("div", { className: "fix-card-title-row", children: [_jsx("div", { className: "fix-card-title", children: toText(row['appName']) }), _jsx("span", { className: "owner-pill", children: toText(row['owner'] || 'Unassigned') })] }), _jsx("div", { className: "fix-card-summary", children: toText(row['summary']) }), _jsxs("div", { className: "fix-meta-grid fix-meta-grid--maturity", children: [_jsxs("div", { children: [_jsx("span", { children: "Category" }), _jsx("strong", { children: toText(row['normalizedCategory']) })] }), _jsxs("div", { children: [_jsx("span", { children: "Confidence" }), _jsxs("strong", { children: [Math.round(confidence * 100), "%"] })] }), _jsxs("div", { children: [_jsx("span", { children: "Updated" }), _jsx("strong", { children: formatRelativeTime(workflowUpdatedAt) || 'Unknown' }), _jsxs("em", { children: [formatDateTimeDisplay(workflowUpdatedAt), " ", formatTimeDisplay(workflowUpdatedAt)] })] }), _jsxs("div", { children: [_jsx("span", { children: "Signature" }), _jsx("strong", { children: toText(row['signature']) })] })] }), _jsxs("div", { className: "fix-next-action fix-next-action--maturity", children: [_jsx("span", { children: "Next best action" }), _jsx("strong", { children: toText(row['nextBestAction']) })] }), _jsxs("div", { className: `fix-notes-preview ${notesText ? '' : 'is-empty'}`, children: [_jsx("span", { children: "Notes preview" }), _jsx("p", { children: notesText ? `${notesText.slice(0, 140)}${notesText.length > 140 ? '…' : ''}` : 'No notes yet. Open this incident to capture remediation progress.' })] }), remediation.length > 0 && (_jsx("ol", { className: "fix-steps", children: remediation.slice(0, 3).map((step, stepIndex) => _jsx("li", { children: step }, stepIndex)) }))] }, String(row['id'] ?? rowIndex)));
-                                    })) })] })) : currentView === 'ocr' ? (_jsxs("div", { className: "ocr-shell", children: [isTrialExpired && (_jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', margin: '0 0 12px', borderRadius: 6, background: '#1a0a0a', border: '1px solid #ef444433' }, children: [_jsx("span", { style: { fontSize: 13, color: '#ef4444', fontFamily: "'DM Mono',monospace" }, children: "\uD83D\uDD12 OCR & AI are disabled \u2014 trial expired. Upgrade to restore access." }), _jsx("button", { onClick: () => setUpgradeModalOpen(true), style: { marginLeft: 'auto', padding: '3px 12px', borderRadius: 4, fontSize: 11, fontFamily: "'DM Mono',monospace", cursor: 'pointer', border: '1px solid #ef444455', background: '#ef444414', color: '#ef4444', flexShrink: 0 }, children: "\u2191 Upgrade" })] })), _jsxs("div", { className: "ocr-head", children: [_jsxs("div", { children: [_jsx("div", { className: "ocr-title", children: "OCR & Error Assistant" }), _jsx("div", { className: "ocr-subtitle", children: "Upload a screenshot or paste an error, then get actionable remediation guidance." })] }), _jsx("span", { className: `status-badge ${statusKind(ocrStatusText)}`, children: ocrStatusText })] }), _jsx("input", { ref: fileInputRef, type: "file", accept: "image/*", className: "hidden", onChange: (event) => {
+                                    })) })] })) : currentView === 'ocr' ? (_jsxs("div", { className: "ocr-shell", children: [isTrialExpired && (_jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', margin: '0 0 12px', borderRadius: 6, background: '#1a0a0a', border: '1px solid #ef444433' }, children: [_jsx("span", { style: { fontSize: 13, color: '#ef4444', fontFamily: "'DM Mono',monospace" }, children: "\uD83D\uDD12 OCR & AI are disabled \u2014 trial expired. Upgrade to restore access." }), _jsx("button", { onClick: () => window.open('https://mendi46.gumroad.com/l/cynmjz', '_blank'), style: { marginLeft: 'auto', padding: '3px 12px', borderRadius: 4, fontSize: 11, fontFamily: "'DM Mono',monospace", cursor: 'pointer', border: '1px solid #ef444455', background: '#ef444414', color: '#ef4444', flexShrink: 0 }, children: "\u2191 Upgrade" })] })), _jsxs("div", { className: "ocr-head", children: [_jsxs("div", { children: [_jsx("div", { className: "ocr-title", children: "OCR & Error Assistant" }), _jsx("div", { className: "ocr-subtitle", children: "Upload a screenshot or paste an error, then get actionable remediation guidance." })] }), _jsx("span", { className: `status-badge ${statusKind(ocrStatusText)}`, children: ocrStatusText })] }), _jsx("input", { ref: fileInputRef, type: "file", accept: "image/*", className: "hidden", onChange: (event) => {
                                         const file = event.target.files?.[0] ?? null;
                                         setOcrImageFile(file);
                                         if (file) {

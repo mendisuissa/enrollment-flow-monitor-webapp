@@ -9,6 +9,7 @@ import { config } from './config.js';
 import { logger, requestLogger } from './utils/logger.js';
 import { authRouter } from './auth/routes.js';
 import { apiRouter } from './routes/api.js';
+import { subscriptionRouter } from './routes/subscriptions.js';
 
 const app = express();
 const isProduction = config.nodeEnv === 'production';
@@ -177,6 +178,7 @@ app.get('/api/diag', devOnly, (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api', subscriptionRouter);
 
 // Public diagnostic — no auth required, safe metadata only
 app.get('/api/debug/connection', devOnly, (req: any, res) => {

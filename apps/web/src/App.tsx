@@ -19,12 +19,9 @@ type SavedViewConfig = {
 const SAVED_VIEW_STORAGE_KEY = 'efm-saved-views-v1';
 
 // ── Trial banner ────────────────────────────────────────────────────────────
-const TRIAL_STORAGE_KEY = 'efm-trial-start-v1';
-const TRIAL_DAYS_TOTAL  = 30;
-const TRIAL_EXEMPT_EMAILS = [
-  'menahem@365-poc.com',
-  'menahem@modernendpoint.tech',
-];
+const TRIAL_STORAGE_KEY   = 'efm-trial-start-v1';
+const TRIAL_DAYS_TOTAL    = 30;
+const TRIAL_EXEMPT_EMAILS = ['menahem@365-poc.com', 'menahem@modernendpoint.tech'];
 function getTrialDaysLeft(upn: string): number {
   if (TRIAL_EXEMPT_EMAILS.includes(upn.toLowerCase())) return Infinity;
   try {
@@ -35,6 +32,7 @@ function getTrialDaysLeft(upn: string): number {
   } catch { return TRIAL_DAYS_TOTAL; }
 }
 // ────────────────────────────────────────────────────────────────────────────
+
 
 const DEVICE_FILTER_CHIPS = [
   { id: 'non-compliant', label: '⚠️ Non-Compliant', color: 'red' },
@@ -184,7 +182,8 @@ export default function App() {
   const [detailsText, setDetailsText] = useState('');
   const [auth, setAuth] = useState({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
   const [trialBannerDismissed, setTrialBannerDismissed] = useState(false);
-  const isTrialExpired = auth.connected && getTrialDaysLeft(auth.upn) === 0;
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const isTrialExpired = auth.connected && !isSubscribed && getTrialDaysLeft(auth.upn) === 0;
   const [ocrImageFile, setOcrImageFile] = useState<File | null>(null);
   const [ocrInputText, setOcrInputText] = useState('');
   const [ocrStatusText, setOcrStatusText] = useState('OCR: Not started');
@@ -256,6 +255,16 @@ export default function App() {
     try {
       const result = await getAuthStatus();
       setAuth(result);
+      // Check subscription status from server
+      if (result.connected) {
+        try {
+          const subRes = await fetch('/api/subscription/status', { credentials: 'include' });
+          const subData = await subRes.json();
+          setIsSubscribed(subData.subscribed === true);
+        } catch {
+          setIsSubscribed(false);
+        }
+      }
       return result;
     } catch {
       const fallback = { connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false };
@@ -1714,6 +1723,7 @@ export default function App() {
       {auth.connected && (() => {
         const daysLeft = getTrialDaysLeft(auth.upn);
         if (daysLeft === Infinity) return null;          // exempt user — no banner
+        if (isSubscribed) return null;                   // paid subscriber — no banner
         if (trialBannerDismissed && daysLeft > 0) return null; // dismissed (not expired)
         const isUrgent  = daysLeft > 0 && daysLeft <= 7;
         const isExpired = daysLeft === 0;
@@ -1758,7 +1768,7 @@ export default function App() {
               <span style={{ fontSize:11, color:'#475569' }}>{TRIAL_DAYS_TOTAL - Math.min(daysLeft, TRIAL_DAYS_TOTAL)}/{TRIAL_DAYS_TOTAL} days</span>
             </div>
             {/* CTA */}
-            <button onClick={() => setUpgradeModalOpen(true)} style={{
+            <button onClick={() => window.open('https://mendi46.gumroad.com/l/cynmjz', '_blank')} style={{
               padding:'4px 14px', borderRadius:5, fontSize:11, fontFamily:'inherit', fontWeight:500,
               cursor:'pointer', border:`1px solid ${color}55`, background:`${color}14`, color, flexShrink:0,
             }}>
@@ -2198,7 +2208,7 @@ export default function App() {
               {isTrialExpired && (
                 <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', margin:'0 0 12px', borderRadius:6, background:'#1a0a0a', border:'1px solid #ef444433' }}>
                   <span style={{ fontSize:13, color:'#ef4444', fontFamily:"'DM Mono',monospace" }}>🔒 OCR &amp; AI are disabled — trial expired. Upgrade to restore access.</span>
-                  <button onClick={() => setUpgradeModalOpen(true)} style={{ marginLeft:'auto', padding:'3px 12px', borderRadius:4, fontSize:11, fontFamily:"'DM Mono',monospace", cursor:'pointer', border:'1px solid #ef444455', background:'#ef444414', color:'#ef4444', flexShrink:0 }}>↑ Upgrade</button>
+                  <button onClick={() => window.open('https://mendi46.gumroad.com/l/cynmjz', '_blank')} style={{ marginLeft:'auto', padding:'3px 12px', borderRadius:4, fontSize:11, fontFamily:"'DM Mono',monospace", cursor:'pointer', border:'1px solid #ef444455', background:'#ef444414', color:'#ef4444', flexShrink:0 }}>↑ Upgrade</button>
                 </div>
               )}
               <div className="ocr-head">

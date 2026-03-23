@@ -31,3 +31,13 @@ model IncidentWorkflow {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
+
+model Subscription {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  gumroadSaleId String?  @unique
+  status        String   @default("active")
+  subscribedAt  DateTime @default(now())
+  expiresAt     DateTime?
+  updatedAt     DateTime @updatedAt
+}
