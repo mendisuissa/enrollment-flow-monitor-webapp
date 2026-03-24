@@ -14,6 +14,45 @@ function getClientIp(req) {
     const forwarded = req.get('x-forwarded-for')?.split(',')[0]?.trim();
     return forwarded || req.ip || req.socket.remoteAddress || '';
 }
+async function recordLoginSuccess(req, tokenResponse) {
+    const userPrincipalName = tokenResponse?.account?.username?.toLowerCase().trim() || null;
+    const tenantId = tokenResponse?.tenantId || null;
+    const displayName = tokenResponse?.account?.name || null;
+    const ipAddress = getClientIp(req);
+    const userAgent = req.get('user-agent') || null;
+    try {
+        const recentWindowStart = new Date(Date.now() - 5 * 60 * 1000);
+        const recentExisting = await prisma.signInEvent.findFirst({
+            where: {
+                eventType: 'login_success',
+                userPrincipalName,
+                tenantId,
+                createdAt: {
+                    gte: recentWindowStart
+                }
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        });
+        if (recentExisting) {
+            return;
+        }
+        await prisma.signInEvent.create({
+            data: {
+                userPrincipalName,
+                displayName,
+                tenantId,
+                ipAddress,
+                userAgent,
+                eventType: 'login_success'
+            }
+        });
+    }
+    catch (error) {
+        console.error('Failed to write sign-in audit event:', error);
+    }
+}
 function decodeTokenScopes(token) {
     try {
         const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
@@ -112,22 +151,8 @@ authRouter.get('/callback', async (req, res) => {
                 tenantId: tokenResponse?.tenantId,
                 name: tokenResponse?.account?.name
             };
-            try {
-                await prisma.signInEvent.create({
-                    data: {
-                        userPrincipalName: tokenResponse?.account?.username?.toLowerCase().trim() || null,
-                        displayName: tokenResponse?.account?.name || null,
-                        tenantId: tokenResponse?.tenantId || null,
-                        ipAddress: getClientIp(req),
-                        userAgent: req.get('user-agent') || null,
-                        eventType: 'login_success'
-                    }
-                });
-            }
-            catch {
-                // Best effort only — auth flow must continue even if audit logging fails
-            }
         }
+        await recordLoginSuccess(req, tokenResponse);
         req.session.authElevated = undefined;
         req.session.authRedirectUri = undefined;
         req.session.authReturnUrl = undefined;

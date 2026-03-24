@@ -18,6 +18,49 @@ function getClientIp(req: Request): string {
   return forwarded || req.ip || req.socket.remoteAddress || '';
 }
 
+async function recordLoginSuccess(req: Request, tokenResponse: any) {
+  const userPrincipalName = tokenResponse?.account?.username?.toLowerCase().trim() || null;
+  const tenantId = tokenResponse?.tenantId || null;
+  const displayName = tokenResponse?.account?.name || null;
+  const ipAddress = getClientIp(req);
+  const userAgent = req.get('user-agent') || null;
+
+  try {
+    const recentWindowStart = new Date(Date.now() - 5 * 60 * 1000);
+
+    const recentExisting = await prisma.signInEvent.findFirst({
+      where: {
+        eventType: 'login_success',
+        userPrincipalName,
+        tenantId,
+        createdAt: {
+          gte: recentWindowStart
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    if (recentExisting) {
+      return;
+    }
+
+    await prisma.signInEvent.create({
+      data: {
+        userPrincipalName,
+        displayName,
+        tenantId,
+        ipAddress,
+        userAgent,
+        eventType: 'login_success'
+      }
+    });
+  } catch (error) {
+    console.error('Failed to write sign-in audit event:', error);
+  }
+}
+
 function decodeTokenScopes(token: string): string[] {
   try {
     const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
@@ -119,36 +162,23 @@ authRouter.get('/callback', async (req: any, res) => {
     const tokenResponse = await msal.acquireTokenByCode({ code, scopes, redirectUri });
 
     if (isElevated) {
-      req.session.writeAccessToken = tokenResponse?.accessToken;
-      req.session.hasWritePermissions = true;
-      req.session.account = {
-        username: tokenResponse?.account?.username ?? req.session.account?.username,
-        tenantId: tokenResponse?.tenantId ?? req.session.account?.tenantId,
-        name: tokenResponse?.account?.name ?? req.session.account?.name
-      };
-    } else {
-      req.session.accessToken = tokenResponse?.accessToken;
-      req.session.account = {
-        username: tokenResponse?.account?.username,
-        tenantId: tokenResponse?.tenantId,
-        name: tokenResponse?.account?.name
-      };
+  req.session.writeAccessToken = tokenResponse?.accessToken;
+  req.session.hasWritePermissions = true;
+  req.session.account = {
+    username: tokenResponse?.account?.username ?? req.session.account?.username,
+    tenantId: tokenResponse?.tenantId ?? req.session.account?.tenantId,
+    name: tokenResponse?.account?.name ?? req.session.account?.name
+  };
+} else {
+  req.session.accessToken = tokenResponse?.accessToken;
+  req.session.account = {
+    username: tokenResponse?.account?.username,
+    tenantId: tokenResponse?.tenantId,
+    name: tokenResponse?.account?.name
+  };
+}
 
-      try {
-        await prisma.signInEvent.create({
-          data: {
-            userPrincipalName: tokenResponse?.account?.username?.toLowerCase().trim() || null,
-            displayName: tokenResponse?.account?.name || null,
-            tenantId: tokenResponse?.tenantId || null,
-            ipAddress: getClientIp(req),
-            userAgent: req.get('user-agent') || null,
-            eventType: 'login_success'
-          }
-        });
-      } catch {
-        // Best effort only — auth flow must continue even if audit logging fails
-      }
-    }
+await recordLoginSuccess(req, tokenResponse);
 
     req.session.authElevated = undefined;
     req.session.authRedirectUri = undefined;
