@@ -7,10 +7,20 @@ import { buildIncidents } from '../engines/incidents.js';
 import { getDataBundle } from '../graph/provider.js';
 import { logger } from '../utils/logger.js';
 import { PrismaIncidentRepository } from '../storage/incidentRepository.js';
+import { prisma } from '../storage/prisma.js';
 import { enrollmentErrorCatalog } from '../catalog/enrollmentErrors.js';
 import { z } from 'zod';
 
 const incidentRepo = new PrismaIncidentRepository();
+
+const ADMIN_UPNS = ['menahem@365-poc.com', 'menahem@modernendpoint.tech'];
+
+function ensureAdmin(req: Request): void {
+  const upn = String((req.session as any)?.account?.username ?? '').toLowerCase().trim();
+  if (!ADMIN_UPNS.includes(upn)) {
+    throw new Error('Forbidden');
+  }
+}
 
 const workflowSchema = z.object({
   owner: z.string().trim().max(120).default('Unassigned'),
@@ -535,6 +545,82 @@ async function explainOcrText(text: string) {
 }
 
 export const apiRouter = Router();
+
+apiRouter.get('/admin/signins/summary', async (req, res) => {
+  try {
+    ensureAdmin(req);
+
+    const [totalLogins, uniqueUsersRaw, uniqueTenantsRaw, lastLogin] = await Promise.all([
+      prisma.signInEvent.count({ where: { eventType: 'login_success' } }),
+      prisma.signInEvent.findMany({
+        where: { eventType: 'login_success', userPrincipalName: { not: null } },
+        distinct: ['userPrincipalName'],
+        select: { userPrincipalName: true }
+      }),
+      prisma.signInEvent.findMany({
+        where: { eventType: 'login_success', tenantId: { not: null } },
+        distinct: ['tenantId'],
+        select: { tenantId: true }
+      }),
+      prisma.signInEvent.findFirst({
+        where: { eventType: 'login_success' },
+        orderBy: { createdAt: 'desc' }
+      })
+    ]);
+
+    return res.json({
+      totalLogins,
+      uniqueUsers: uniqueUsersRaw.length,
+      uniqueTenants: uniqueTenantsRaw.length,
+      lastLoginAt: lastLogin?.createdAt?.toISOString() ?? null,
+      lastLoginUser: lastLogin?.userPrincipalName ?? null
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Failed to load sign-in summary.';
+    return res.status(msg === 'Forbidden' ? 403 : 500).json({ message: msg });
+  }
+});
+
+apiRouter.get('/admin/signins', async (req, res) => {
+  try {
+    ensureAdmin(req);
+
+    const takeRaw = Number(req.query.take ?? 100);
+    const take = Number.isFinite(takeRaw) ? Math.min(Math.max(takeRaw, 1), 500) : 100;
+
+    const rows = await prisma.signInEvent.findMany({
+      where: { eventType: 'login_success' },
+      orderBy: { createdAt: 'desc' },
+      take
+    });
+
+    return res.json({
+      rows: rows.map((row: {
+        id: string;
+        createdAt: Date;
+        userPrincipalName: string | null;
+        displayName: string | null;
+        tenantId: string | null;
+        ipAddress: string | null;
+        userAgent: string | null;
+        eventType: string;
+      }) => ({
+        id: row.id,
+        createdAt: row.createdAt.toISOString(),
+        userPrincipalName: row.userPrincipalName,
+        displayName: row.displayName,
+        tenantId: row.tenantId,
+        ipAddress: row.ipAddress,
+        userAgent: row.userAgent,
+        eventType: row.eventType
+      }))
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Failed to load sign-ins.';
+    return res.status(msg === 'Forbidden' ? 403 : 500).json({ message: msg });
+  }
+});
+
 apiRouter.use(ensureConnected);
 
 apiRouter.post('/ocr/explain', async (req, res) => {
