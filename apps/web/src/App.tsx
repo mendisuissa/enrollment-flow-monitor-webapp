@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { IncidentWorkflowRecord, IncidentWorkflowStatus, ViewName } from '@efm/shared';
-type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home';
+type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home' | 'adminDashboard';
 import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction, getExportUrl, getIncidentWorkflows, saveIncidentWorkflow } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
@@ -171,6 +171,172 @@ function renderTableValue(header: string, value: unknown) {
   return toText(value);
 }
 
+
+
+// ── AdminDashboard — visible only to ADMIN_UPNS ────────────────────────────
+const ADMIN_EMAILS = ['menahem@365-poc.com', 'menahem@modernendpoint.tech'];
+
+function AdminDashboard() {
+  const [summary, setSummary] = useState<any>(null);
+  const [rows, setRows]       = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState('');
+  const [search, setSearch]   = useState('');
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [sumRes, rowsRes] = await Promise.all([
+          fetch('/api/admin/signins/summary', { credentials: 'include' }),
+          fetch('/api/admin/signins?take=200', { credentials: 'include' }),
+        ]);
+        if (sumRes.status === 403 || rowsRes.status === 403) {
+          setError('Access denied.');
+          return;
+        }
+        const sumData  = await sumRes.json();
+        const rowsData = await rowsRes.json();
+        setSummary(sumData);
+        setRows(rowsData.rows ?? []);
+      } catch {
+        setError('Failed to load data.');
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  const filtered = rows.filter(r =>
+    !search ||
+    (r.userPrincipalName ?? '').toLowerCase().includes(search.toLowerCase()) ||
+    (r.displayName ?? '').toLowerCase().includes(search.toLowerCase()) ||
+    (r.tenantId ?? '').toLowerCase().includes(search.toLowerCase())
+  );
+
+  // Group by user for session summary
+  const byUser: Record<string, { upn: string; name: string; tenant: string; count: number; last: string }> = {};
+  rows.forEach(r => {
+    const key = r.userPrincipalName ?? 'unknown';
+    if (!byUser[key]) byUser[key] = { upn: key, name: r.displayName ?? key, tenant: r.tenantId ?? '—', count: 0, last: r.createdAt };
+    byUser[key].count++;
+    if (r.createdAt > byUser[key].last) byUser[key].last = r.createdAt;
+  });
+  const userList = Object.values(byUser).sort((a, b) => b.last.localeCompare(a.last));
+
+  function fmt(iso: string) {
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  }
+  function timeAgo(iso: string) {
+    const diff = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+  }
+
+  if (loading) return <div style={{ padding: 40, color: 'var(--text-muted)', fontFamily: "'DM Mono', monospace" }}>Loading admin data...</div>;
+  if (error)   return <div style={{ padding: 40, color: '#ef4444', fontFamily: "'DM Mono', monospace" }}>{error}</div>;
+
+  return (
+    <div style={{ padding: '24px 28px', maxWidth: 1200 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+        <div style={{ fontSize: 22 }}>🛡️</div>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>Admin Dashboard</div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: "'DM Mono', monospace" }}>Visible only to: {ADMIN_EMAILS.join(', ')}</div>
+        </div>
+      </div>
+
+      {/* KPI cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
+        {[
+          { label: 'Total Logins',    value: summary?.totalLogins   ?? 0, color: '#60a5fa' },
+          { label: 'Unique Users',    value: summary?.uniqueUsers   ?? 0, color: '#22c55e' },
+          { label: 'Unique Tenants',  value: summary?.uniqueTenants ?? 0, color: '#f59e0b' },
+          { label: 'Last Login',      value: summary?.lastLoginAt ? timeAgo(summary.lastLoginAt) : '—', color: '#e2e8f0' },
+        ].map((k, i) => (
+          <div key={i} style={{ background: 'var(--navy-mid)', border: '1px solid var(--navy-border)', borderRadius: 10, padding: '16px 18px' }}>
+            <div style={{ fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>{k.label}</div>
+            <div style={{ fontSize: 26, fontWeight: 800, color: k.color, fontFamily: "'DM Mono', monospace", lineHeight: 1 }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Users table */}
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Users ({userList.length})</div>
+        <div style={{ background: 'var(--navy-mid)', border: '1px solid var(--navy-border)', borderRadius: 10, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
+                {['User', 'Display Name', 'Tenant ID', 'Sessions', 'Last Seen'].map(h => (
+                  <th key={h} style={{ padding: '10px 14px', textAlign: 'left', color: 'var(--text-dim)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid var(--navy-border)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {userList.map((u, i) => (
+                <tr key={u.upn} style={{ borderBottom: '1px solid var(--navy)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                  <td style={{ padding: '9px 14px', color: '#60a5fa', fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{u.upn}</td>
+                  <td style={{ padding: '9px 14px', color: 'var(--text-muted)' }}>{u.name}</td>
+                  <td style={{ padding: '9px 14px', color: 'var(--text-dim)', fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{u.tenant.slice(0, 8)}…</td>
+                  <td style={{ padding: '9px 14px' }}>
+                    <span style={{ background: 'rgba(96,165,250,0.12)', color: '#60a5fa', padding: '2px 8px', borderRadius: 4, fontSize: 11, fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>{u.count}</span>
+                  </td>
+                  <td style={{ padding: '9px 14px', color: 'var(--text-dim)', fontSize: 11 }}>{timeAgo(u.last)}</td>
+                </tr>
+              ))}
+              {userList.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: '20px 14px', color: 'var(--text-dim)', textAlign: 'center' }}>No sign-ins recorded yet</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Raw sign-in log */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Sign-in log ({filtered.length})</div>
+          <input
+            type="text" placeholder="Filter by user / tenant..."
+            value={search} onChange={e => setSearch(e.target.value)}
+            style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--navy-border)', background: 'var(--navy)', color: 'var(--text)', fontSize: 11, fontFamily: "'DM Mono', monospace", width: 240 }}
+          />
+        </div>
+        <div style={{ background: 'var(--navy-mid)', border: '1px solid var(--navy-border)', borderRadius: 10, overflow: 'hidden', maxHeight: 400, overflowY: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+            <thead style={{ position: 'sticky', top: 0, background: 'var(--navy-mid)', zIndex: 1 }}>
+              <tr style={{ background: 'rgba(0,0,0,0.3)' }}>
+                {['Time', 'User', 'Display Name', 'Tenant', 'IP'].map(h => (
+                  <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text-dim)', fontWeight: 600, fontSize: 9, textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: '1px solid var(--navy-border)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r, i) => (
+                <tr key={r.id} style={{ borderBottom: '1px solid var(--navy)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                  <td style={{ padding: '7px 12px', color: 'var(--text-dim)', fontFamily: "'DM Mono', monospace", whiteSpace: 'nowrap' }}>{fmt(r.createdAt)}</td>
+                  <td style={{ padding: '7px 12px', color: '#60a5fa', fontFamily: "'DM Mono', monospace" }}>{r.userPrincipalName ?? '—'}</td>
+                  <td style={{ padding: '7px 12px', color: 'var(--text-muted)' }}>{r.displayName ?? '—'}</td>
+                  <td style={{ padding: '7px 12px', color: 'var(--text-dim)', fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{(r.tenantId ?? '').slice(0, 8)}…</td>
+                  <td style={{ padding: '7px 12px', color: 'var(--text-dim)' }}>{r.ipAddress ?? '—'}</td>
+                </tr>
+              ))}
+              {filtered.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: '20px 12px', color: 'var(--text-dim)', textAlign: 'center' }}>No results</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── EfmWalkthrough — interactive feature tour ─────────────────────────────
 function EfmWalkthrough({ onSignIn }: { onSignIn: () => void }) {
@@ -1879,6 +2045,11 @@ export default function App() {
                         Theme: {themePreference}
                       </button>
                     )}
+                    {ADMIN_EMAILS.includes((auth.upn ?? '').toLowerCase()) && (
+                      <button className="btn btn-secondary" style={{ marginBottom: 4 }} onClick={() => { setCurrentView('adminDashboard'); setIsUserMenuOpen(false); }}>
+                        🛡️ Admin Dashboard
+                      </button>
+                    )}
                     <button className="btn btn-danger" onClick={onDisconnect}>Disconnect</button>
                   </div>
                 )}
@@ -2040,7 +2211,9 @@ export default function App() {
         )}
 
         <div className="panel">
-          {currentView === 'privacy' ? (
+          {currentView === 'adminDashboard' ? (
+            <AdminDashboard />
+          ) : currentView === 'privacy' ? (
             <div className="privacy-shell">
               <div className="privacy-header">
                 <button className="btn btn-secondary" style={{ fontSize: 11, marginBottom: 16, alignSelf: 'flex-start' }} onClick={() => setCurrentView('dashboard')}>← Back</button>
@@ -2135,14 +2308,6 @@ export default function App() {
 
               {/* ── WALKTHROUGH ── */}
               <EfmWalkthrough onSignIn={() => { window.location.href = '/api/auth/login'; }} />
-
-              {/* ── FOOTER ── */}
-              <div className="welcome-footer">
-                © {new Date().getFullYear()}{' '}
-                <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'none', fontWeight: 700 }}>modernendpoint.tech</a>
-                {' '}· by Menahem Suissa ·{' '}
-                <button style={{ background: 'none', border: 'none', color: 'var(--amber)', cursor: 'pointer', fontWeight: 700, fontSize: 'inherit', fontFamily: 'inherit', padding: 0 }} onClick={() => setCurrentView('privacy')}>Privacy Policy</button>
-              </div>
 
               {/* Tutorial Modal */}
               {tutorialOpen && (
