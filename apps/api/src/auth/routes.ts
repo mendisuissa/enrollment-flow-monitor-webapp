@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import { config } from '../config.js';
 import { getMsalApp } from './msal.js';
+import { prisma } from '../storage/prisma.js';
 
 export const authRouter = Router();
 
@@ -10,6 +11,11 @@ function getRequestOrigin(req: Request): string {
   const host = forwardedHost || req.get('host') || '';
   const protocol = forwardedProto || req.protocol;
   return `${protocol}://${host}`;
+}
+
+function getClientIp(req: Request): string {
+  const forwarded = req.get('x-forwarded-for')?.split(',')[0]?.trim();
+  return forwarded || req.ip || req.socket.remoteAddress || '';
 }
 
 function decodeTokenScopes(token: string): string[] {
@@ -127,6 +133,21 @@ authRouter.get('/callback', async (req: any, res) => {
         tenantId: tokenResponse?.tenantId,
         name: tokenResponse?.account?.name
       };
+
+      try {
+        await prisma.signInEvent.create({
+          data: {
+            userPrincipalName: tokenResponse?.account?.username?.toLowerCase().trim() || null,
+            displayName: tokenResponse?.account?.name || null,
+            tenantId: tokenResponse?.tenantId || null,
+            ipAddress: getClientIp(req),
+            userAgent: req.get('user-agent') || null,
+            eventType: 'login_success'
+          }
+        });
+      } catch {
+        // Best effort only — auth flow must continue even if audit logging fails
+      }
     }
 
     req.session.authElevated = undefined;

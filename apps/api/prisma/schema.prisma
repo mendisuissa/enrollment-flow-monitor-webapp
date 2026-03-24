@@ -41,3 +41,16 @@ model Subscription {
   expiresAt     DateTime?
   updatedAt     DateTime @updatedAt
 }
+
+
+
+model SignInEvent {
+  id                String   @id @default(cuid())
+  createdAt         DateTime @default(now())
+  eventType         String   @default("login_success")
+  userPrincipalName String?
+  displayName       String?
+  tenantId          String?
+  ipAddress         String?
+  userAgent         String?
+}
