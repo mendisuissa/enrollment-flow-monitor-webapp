@@ -171,6 +171,148 @@ function renderTableValue(header: string, value: unknown) {
   return toText(value);
 }
 
+
+// ── EfmWalkthrough — interactive feature tour ─────────────────────────────
+function EfmWalkthrough({ onSignIn }: { onSignIn: () => void }) {
+  const [step, setStep] = useState(0);
+
+  const steps = [
+    {
+      icon: '🎛️', title: 'Command Center',
+      desc: 'Real-time enrollment health dashboard. Instant visibility into compliance rates, failed enrollments, and platform breakdown across your entire tenant.',
+      stats: [
+        { label: 'Health Score', value: '84', color: '#22c55e' },
+        { label: 'Total Devices', value: '128', color: '#e2e8f0' },
+        { label: 'Failed', value: '11', color: '#ef4444' },
+      ],
+      rows: [
+        { name: 'iis-srv-devops',   sub: 'Win 10.0.20348', status: 'UNKNOWN',   cls: 'badge-unk' },
+        { name: 'CPC-talys-O4MMV',  sub: 'Win 10.0.26200', status: 'COMPLIANT', cls: 'badge-ok'  },
+        { name: 'BG-DAGAN-AAT',     sub: 'Win 10.0.20348', status: 'FAILED',    cls: 'badge-err' },
+      ],
+    },
+    {
+      icon: '📚', title: 'Failure Catalog',
+      desc: '53+ known enrollment error codes with root causes and step-by-step remediation — searchable by code, platform, and severity.',
+      stats: [
+        { label: 'Total errors', value: '53+', color: '#60a5fa' },
+        { label: 'High severity', value: '18', color: '#ef4444' },
+        { label: 'Platforms', value: '4', color: '#f59e0b' },
+      ],
+      rows: [
+        { name: '0x80180014 — MDM enrollment not allowed',     sub: 'Windows · iOS · Android', status: 'HIGH',   cls: 'badge-err' },
+        { name: '0x80070774 — Autopilot profile not assigned', sub: 'Windows',                  status: 'HIGH',   cls: 'badge-err' },
+        { name: '0x80CF0014 — Company Portal not updated',     sub: 'Windows · Android',        status: 'LOW',    cls: 'badge-ok'  },
+      ],
+    },
+    {
+      icon: '🧠', title: 'OCR & AI Assistant',
+      desc: 'Upload any Intune error screenshot. OCR extracts the text automatically, then AI provides root cause analysis and remediation steps.',
+      stats: [
+        { label: 'Category', value: 'MDMEnrollment', color: '#60a5fa' },
+        { label: 'Confidence', value: '92%', color: '#22c55e' },
+        { label: 'Actions', value: '3 steps', color: '#f59e0b' },
+      ],
+      rows: [
+        { name: 'Run dsregcmd /status → verify AzureAdJoined=YES', sub: 'Recommended action 1', status: 'STEP 1', cls: 'badge-unk' },
+        { name: 'Verify Intune license + MDM user scope',           sub: 'Recommended action 2', status: 'STEP 2', cls: 'badge-unk' },
+        { name: 'Clear stale EnterpriseMgmt enrollment state',      sub: 'Recommended action 3', status: 'STEP 3', cls: 'badge-unk' },
+      ],
+    },
+    {
+      icon: '✅', title: 'Readiness Checklist',
+      desc: 'Pre-flight verification before every rollout. Automatically checks Autopilot, ADE iOS/macOS, and Android Enterprise prerequisites.',
+      stats: [
+        { label: 'Autopilot', value: '✓ Ready', color: '#22c55e' },
+        { label: 'ADE iOS',   value: '⚠ 2 gaps', color: '#f59e0b' },
+        { label: 'Android',   value: '✓ Ready', color: '#22c55e' },
+      ],
+      rows: [
+        { name: 'Windows Devices Detected',  sub: '6 devices found',              status: 'PASS', cls: 'badge-ok'  },
+        { name: 'MDM User Scope Configured', sub: 'Set to All or target group',    status: 'PASS', cls: 'badge-ok'  },
+        { name: 'Hardware Hash Uploaded',    sub: 'Check Enrollment → Autopilot',  status: 'GAP',  cls: 'badge-err' },
+      ],
+    },
+    {
+      icon: '⚡', title: 'Graph Query & Reports',
+      desc: 'Run Microsoft Graph API queries directly with pre-built templates. Export live compliance reports as PDF for stakeholders in one click.',
+      stats: [
+        { label: 'Templates', value: '6 built-in', color: '#60a5fa' },
+        { label: 'Export', value: 'PDF / CSV / JSON', color: '#f59e0b' },
+        { label: 'Data', value: 'Real-time', color: '#22c55e' },
+      ],
+      rows: [
+        { name: 'GET /deviceManagement/managedDevices',              sub: 'All Devices template',       status: 'READY', cls: 'badge-ok' },
+        { name: 'GET /deviceManagement/deviceCompliancePolicies',    sub: 'Compliance template',        status: 'READY', cls: 'badge-ok' },
+        { name: 'GET /users?$filter=accountEnabled eq true',         sub: 'Users template',             status: 'READY', cls: 'badge-ok' },
+      ],
+    },
+  ];
+
+  const s = steps[step];
+
+  return (
+    <div className="efm-walkthrough">
+      <div className="efm-wt-header">
+        <span className="efm-wt-title">Platform tour</span>
+        <div className="efm-wt-tabs">
+          {steps.map((st, i) => (
+            <button key={i} className={"efm-wt-tab" + (i === step ? " active" : "")} onClick={() => setStep(i)}>
+              <span style={{ fontSize: 15 }}>{st.icon}</span>
+              <span className="efm-wt-tab-label">{st.title}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="efm-wt-body">
+        <div className="efm-wt-left">
+          <div className="efm-wt-feat-icon">{s.icon}</div>
+          <div className="efm-wt-feat-title">{s.title}</div>
+          <div className="efm-wt-feat-desc">{s.desc}</div>
+          <div className="efm-wt-stats">
+            {s.stats.map((st, i) => (
+              <div key={i} className="efm-wt-stat">
+                <div className="efm-wt-stat-val" style={{ color: st.color }}>{st.value}</div>
+                <div className="efm-wt-stat-lbl">{st.label}</div>
+              </div>
+            ))}
+          </div>
+          <button className="btn btn-primary welcome-signin-btn" style={{ marginTop: 24, width: '100%' }} onClick={onSignIn}>
+            🔑 Sign in to use this feature
+          </button>
+        </div>
+
+        <div className="efm-wt-right">
+          <div className="efm-demo-label">Live preview (demo data)</div>
+          <div className="efm-device-preview" style={{ marginTop: 8 }}>
+            {s.rows.map((r, i) => (
+              <div key={i} className="efm-device-row">
+                <div className="efm-device-info">
+                  <div className="efm-device-name">{r.name}</div>
+                  <div className="efm-device-os">{r.sub}</div>
+                </div>
+                <span className={"efm-badge " + r.cls}>{r.status}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="efm-wt-nav">
+        <button className="efm-wt-nav-btn" onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0}>← Prev</button>
+        <div className="efm-wt-dots">
+          {steps.map((_, i) => <div key={i} className={"efm-wt-dot" + (i === step ? " active" : "")} onClick={() => setStep(i)} />)}
+        </div>
+        {step < steps.length - 1
+          ? <button className="efm-wt-nav-btn" onClick={() => setStep(step + 1)}>Next →</button>
+          : <button className="btn btn-primary welcome-signin-btn" style={{ padding: '6px 18px', fontSize: 12 }} onClick={onSignIn}>🔑 Get started</button>
+        }
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -1925,95 +2067,80 @@ export default function App() {
             </div>
 
           ) : !auth.connected ? (
-            <div className="welcome-screen">
-              <div className="welcome-hero">
-                <div className="welcome-logo-mark">EF</div>
-                <h1 className="welcome-title">Enrollment Flow Monitor</h1>
-                <p className="welcome-tagline">
-                  The all-in-one Intune enrollment intelligence platform for IT Admins —
-                  diagnose failures, track compliance, and roll out with confidence.
-                </p>
-                <div
-                  style={{
-                    marginTop: 16,
-                    padding: '12px 14px',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: 12,
-                    background: 'rgba(255,255,255,0.03)',
-                    color: 'var(--text-secondary)'
-                  }}
-                >
-                  Viewing demo experience — sign in to connect your Microsoft tenant for live data.
-                </div>
-                <div className="welcome-actions">
-                  <button className="btn btn-primary welcome-signin-btn" onClick={() => { window.location.href = '/api/auth/login'; }}>
-                    🔑 Sign in with Microsoft
-                  </button>
-                  <button className="btn welcome-tutorial-btn" onClick={() => setTutorialOpen(true)}>
-                    ▶ Watch Tutorial
-                  </button>
-                  <button className="btn btn-secondary" onClick={() => setCurrentView('privacy')}>
-                    Privacy Policy
-                  </button>
-                </div>
-              </div>
-
-              <div className="kpi-row" style={{ marginTop: 18 }}>
-                <div className="kpi-card">
-                  <div className="kpi-label">Enrollment Health Score</div>
-                  <div className="kpi-value">{demoDashboardData.healthScore}</div>
-                  <div className="kpi-sub">Sample tenant posture</div>
-                </div>
-                <div className="kpi-card">
-                  <div className="kpi-label">Total Devices</div>
-                  <div className="kpi-value">{demoDashboardData.totalDevices}</div>
-                  <div className="kpi-sub">Demo inventory</div>
-                </div>
-                <div className="kpi-card">
-                  <div className="kpi-label">Failed Enrollments</div>
-                  <div className="kpi-value">{demoDashboardData.failedEnrollments}</div>
-                  <div className="kpi-sub">Needs review</div>
-                </div>
-                <div className="kpi-card">
-                  <div className="kpi-label">Readiness Risks</div>
-                  <div className="kpi-value">{demoDashboardData.readinessRisks}</div>
-                  <div className="kpi-sub">Pre-flight gaps</div>
-                </div>
-              </div>
-
-              <div className="welcome-features">
-                <div className="welcome-feature">
-                  <span className="wf-icon">📚</span>
-                  <div className="wf-text">
-                    <div className="wf-title">Failure Catalog</div>
-                    <div className="wf-desc">53 known enrollment errors with remediation steps</div>
+            <div className="welcome-screen efm-landing">
+              {/* ── HERO ── */}
+              <div className="efm-hero">
+                <div className="efm-hero-left">
+                  <div className="efm-live-badge">
+                    <span className="efm-pulse-dot" />
+                    LIVE DEMO — No sign-in required
+                  </div>
+                  <h1 className="efm-hero-title">
+                    Intune Enrollment<br />
+                    <span className="efm-hero-accent">Intelligence Platform</span>
+                  </h1>
+                  <p className="efm-hero-sub">
+                    Diagnose enrollment failures, track compliance, and roll out with confidence —
+                    connected directly to your Microsoft tenant via Entra ID.
+                  </p>
+                  <div className="efm-hero-actions">
+                    <button className="btn btn-primary welcome-signin-btn" onClick={() => { window.location.href = '/api/auth/login'; }}>
+                      🔑 Sign in with Microsoft
+                    </button>
+                    <button className="btn welcome-tutorial-btn" onClick={() => setTutorialOpen(true)}>
+                      ▶ Watch Tutorial
+                    </button>
+                  </div>
+                  <div className="efm-trust-row">
+                    <span className="efm-trust-item"><span className="efm-trust-dot" />Connects via Entra ID</span>
+                    <span className="efm-trust-item"><span className="efm-trust-dot" />No data stored</span>
+                    <span className="efm-trust-item"><span className="efm-trust-dot" />30-day free trial</span>
                   </div>
                 </div>
-                <div className="welcome-feature">
-                  <span className="wf-icon">📈</span>
-                  <div className="wf-text">
-                    <div className="wf-title">Executive Reports</div>
-                    <div className="wf-desc">Health scores, compliance rates & platform breakdown</div>
+                <div className="efm-hero-right">
+                  <div className="efm-demo-label">Demo data preview</div>
+                  <div className="kpi-row" style={{ marginBottom: 10 }}>
+                    <div className="kpi-card">
+                      <div className="kpi-label">Health Score</div>
+                      <div className="kpi-value green">{demoDashboardData.healthScore}</div>
+                    </div>
+                    <div className="kpi-card">
+                      <div className="kpi-label">Total Devices</div>
+                      <div className="kpi-value">{demoDashboardData.totalDevices}</div>
+                    </div>
+                    <div className="kpi-card">
+                      <div className="kpi-label">Failed</div>
+                      <div className="kpi-value red">{demoDashboardData.failedEnrollments}</div>
+                    </div>
+                    <div className="kpi-card">
+                      <div className="kpi-label">Risks</div>
+                      <div className="kpi-value amber">{demoDashboardData.readinessRisks}</div>
+                    </div>
                   </div>
-                </div>
-                <div className="welcome-feature">
-                  <span className="wf-icon">✅</span>
-                  <div className="wf-text">
-                    <div className="wf-title">Readiness Risks</div>
-                    <div className="wf-desc">Pre-flight for Autopilot, ADE, Android Enterprise</div>
-                  </div>
-                </div>
-                <div className="welcome-feature">
-                  <span className="wf-icon">🤖</span>
-                  <div className="wf-text">
-                    <div className="wf-title">AI Assistant</div>
-                    <div className="wf-desc">Guided troubleshooting and next-step recommendations</div>
+                  <div className="efm-device-preview">
+                    {[
+                      { name: 'iis-srv-devops',   os: 'Win 10.0.20348', status: 'UNKNOWN',   cls: 'badge-unk' },
+                      { name: 'CPC-talys-O4MMV',  os: 'Win 10.0.26200', status: 'COMPLIANT', cls: 'badge-ok'  },
+                      { name: 'BG-DAGAN-AAT',     os: 'Win 10.0.20348', status: 'FAILED',    cls: 'badge-err' },
+                    ].map(d => (
+                      <div key={d.name} className="efm-device-row">
+                        <span className="efm-device-name">{d.name}</span>
+                        <span className="efm-device-os">{d.os}</span>
+                        <span className={`efm-badge ${d.cls}`}>{d.status}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
 
+              {/* ── WALKTHROUGH ── */}
+              <EfmWalkthrough onSignIn={() => { window.location.href = '/api/auth/login'; }} />
+
+              {/* ── FOOTER ── */}
               <div className="welcome-footer">
-                © {new Date().getFullYear()} <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'none', fontWeight: 700 }}>modernendpoint.tech</a> · by Menahem Suissa ·{' '}
+                © {new Date().getFullYear()}{' '}
+                <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'none', fontWeight: 700 }}>modernendpoint.tech</a>
+                {' '}· by Menahem Suissa ·{' '}
                 <button style={{ background: 'none', border: 'none', color: 'var(--amber)', cursor: 'pointer', fontWeight: 700, fontSize: 'inherit', fontFamily: 'inherit', padding: 0 }} onClick={() => setCurrentView('privacy')}>Privacy Policy</button>
               </div>
 
