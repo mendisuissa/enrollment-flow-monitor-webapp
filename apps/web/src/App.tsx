@@ -606,6 +606,15 @@ export default function App() {
       return;
     }
 
+    if (view === 'adminDashboard') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Admin dashboard loaded.');
+      setDetailsSummary('Admin Dashboard');
+      setDetailsText('Sign-in analytics and user activity.');
+      return;
+    }
+
     try {
       setIsViewLoading(true);
       const result = await getView(view);
