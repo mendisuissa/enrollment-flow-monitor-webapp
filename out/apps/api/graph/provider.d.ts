@@ -4,6 +4,10 @@ interface DataBundle {
     appStatuses: AppStatusRow[];
     users: UserRow[];
     devices: ManagedDevice[];
+    diagnostics?: {
+        devicesAvailable: boolean;
+        devicesMessage?: string;
+    };
 }
 export declare class GraphDataError extends Error {
     readonly context: string;

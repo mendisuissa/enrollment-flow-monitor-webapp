@@ -78,7 +78,6 @@ function ensureConnected(req, res, next) {
 }
 async function getViewData(accessToken) {
     const bundle = await getDataBundle(accessToken);
-    // Normalize app status rows (if any)
     const statuses = [];
     for (const row of bundle.appStatuses ?? []) {
         const normalized = await normalizeStatus(row);
@@ -90,7 +89,6 @@ async function getViewData(accessToken) {
             recommendedActions: normalized.recommendedActions
         });
     }
-    // Build + persist incidents (best effort)
     const incidents = buildIncidents(statuses);
     try {
         await incidentRepo.upsertMany(incidents);
@@ -103,7 +101,10 @@ async function getViewData(accessToken) {
         devices: bundle.devices ?? [],
         users: bundle.users ?? [],
         statuses,
-        incidents
+        incidents,
+        diagnostics: bundle.diagnostics ?? {
+            devicesAvailable: true
+        }
     };
 }
 function buildDashboard(data) {
@@ -705,7 +706,14 @@ apiRouter.get('/view/:view', async (req, res) => {
         }
         const data = await getViewData(req.session.accessToken);
         if (view === 'dashboard') {
-            return res.json({ rows: [buildDashboard(data)], message: 'Command Center loaded.' });
+            const message = data.diagnostics?.devicesAvailable === false
+                ? data.diagnostics.devicesMessage ?? 'Command Center loaded with limited tenant data.'
+                : 'Command Center loaded.';
+            return res.json({
+                rows: [buildDashboard(data)],
+                message,
+                diagnostics: data.diagnostics
+            });
         }
         if (view === 'windowsEnrollment') {
             return res.json({ rows: buildWindowsEnrollmentGrid(data), message: 'Windows Enrollment loaded.' });

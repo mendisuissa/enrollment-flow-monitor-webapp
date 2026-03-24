@@ -88,6 +88,15 @@ function simplifyGraphError(err) {
         .replace(/\s+/g, ' ')
         .trim();
 }
+function isIntuneManagedDevicesUnavailable(err) {
+    const msg = String(err?.message ?? err ?? '').toLowerCase();
+    return (msg.includes('request not applicable to target tenant') ||
+        msg.includes('resource not found for the segment') ||
+        msg.includes('application is not authorized') ||
+        msg.includes('forbidden') ||
+        msg.includes('deviceManagement'.toLowerCase()) ||
+        msg.includes('manageddevices'));
+}
 async function safeGraphList(accessToken, url, options = {}) {
     try {
         return await graphList(accessToken, url);
@@ -191,13 +200,24 @@ async function getGraphDevices(accessToken) {
     for (const attempt of attempts) {
         try {
             const devices = await safeGraphList(accessToken, attempt.url, { context: attempt.context });
-            return devices.map(mapDevice);
+            return {
+                devices: devices.map(mapDevice),
+                available: true
+            };
         }
         catch (error) {
-            lastError = error instanceof GraphDataError
-                ? error
-                : new GraphDataError(attempt.context, simplifyGraphError(error));
+            lastError =
+                error instanceof GraphDataError
+                    ? error
+                    : new GraphDataError(attempt.context, simplifyGraphError(error));
         }
+    }
+    if (isIntuneManagedDevicesUnavailable(lastError)) {
+        return {
+            devices: [],
+            available: false,
+            message: 'Managed devices data is unavailable for this tenant. The tenant may not have Intune enabled, required permissions may be missing, or this workload is not applicable to the current tenant.'
+        };
     }
     throw new GraphDataError('Loading managed devices from Graph', lastError?.causeMessage ?? 'Unknown failure while calling managedDevices.');
 }
@@ -209,7 +229,15 @@ export async function getDataBundle(accessToken) {
             loadFixture('users.json'),
             loadFixture('devices.json')
         ]);
-        return { apps, appStatuses, users, devices };
+        return {
+            apps,
+            appStatuses,
+            users,
+            devices,
+            diagnostics: {
+                devicesAvailable: true
+            }
+        };
     }
     const apps = await getGraphApps(accessToken);
     let appStatuses = [];
@@ -220,10 +248,22 @@ export async function getDataBundle(accessToken) {
         console.error('App statuses load failed:', err?.message ?? err);
         appStatuses = [];
     }
-    const [users, devices] = await Promise.all([
-        getGraphUsers(accessToken),
-        getGraphDevices(accessToken)
-    ]);
-    return { apps, appStatuses, users, devices };
+    const users = await getGraphUsers(accessToken);
+    let devices = [];
+    let diagnostics = {
+        devicesAvailable: true
+    };
+    try {
+        const deviceResult = await getGraphDevices(accessToken);
+        devices = deviceResult.devices;
+        diagnostics = {
+            devicesAvailable: deviceResult.available,
+            devicesMessage: deviceResult.message
+        };
+    }
+    catch (err) {
+        throw err;
+    }
+    return { apps, appStatuses, users, devices, diagnostics };
 }
 //# sourceMappingURL=provider.js.map
