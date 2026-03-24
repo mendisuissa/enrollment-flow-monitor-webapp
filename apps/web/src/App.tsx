@@ -384,6 +384,14 @@ export default function App() {
 
   useEffect(() => {
     if (!auth.connected) {
+      if (currentView === 'privacy') {
+        setRows([]);
+        setSelectedIndex(null);
+        setStatusMessage('Privacy policy loaded.');
+        setDetailsSummary('Privacy Policy');
+        setDetailsText('Review the privacy policy content for Enrollment Flow Monitor.');
+        return;
+      }
       setRows([]);
       setSelectedIndex(null);
       setStatusMessage('Public preview mode. Sign in to load tenant data.');
@@ -1278,6 +1286,20 @@ export default function App() {
   // Dashboard KPI state
   const [dashboardData, setDashboardData] = useState<any>(null);
 
+  const demoDashboardData = useMemo(() => ({
+    totalDevices: 128,
+    windowsEnrollmentDevices: 74,
+    mobileEnrollmentDevices: 31,
+    macEnrollmentDevices: 15,
+    linuxEnrollmentDevices: 8,
+    failedEnrollments: 11,
+    readinessRisks: 7,
+    healthScore: 84,
+    activeIncidents: 3,
+    lastRefresh: new Date().toISOString()
+  }), []);
+
+
   // ── Device Remediation state ─────────────────────────────
   const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
   const [confirmModal, setConfirmModal] = useState<{
@@ -1876,7 +1898,33 @@ export default function App() {
         )}
 
         <div className="panel">
-          {!auth.connected ? (
+          {currentView === 'privacy' ? (
+            <div className="privacy-shell">
+              <div className="privacy-header">
+                <button className="btn btn-secondary" style={{ fontSize: 11, marginBottom: 16, alignSelf: 'flex-start' }} onClick={() => setCurrentView('dashboard')}>← Back</button>
+                <h1 className="privacy-title">Privacy Policy</h1>
+                <p className="privacy-effective">Effective date: January 1, 2025 · <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" className="privacy-site-link">modernendpoint.tech</a></p>
+              </div>
+              <div className="privacy-body">
+                {[
+                  { title: '1. Introduction', content: 'Enrollment Flow Monitor ("the App") is operated by Menahem Suissa / modernendpoint.tech. This Privacy Policy explains how we collect, use, and protect information when you use the App to monitor Microsoft Intune enrollment data in your organization.' },
+                  { title: '2. Data We Access', content: "The App connects to Microsoft Graph API using delegated permissions granted by you or your organization's IT administrator. It accesses device management data including device names, compliance states, enrollment statuses, and user principal names solely to display them within the App interface." },
+                  { title: '3. Data Storage', content: "The App does not store, cache, or transmit your Microsoft tenant data to any external server owned by us. All Microsoft Graph data is fetched in real-time and displayed only in your browser session. Session data (authentication tokens) is stored server-side in an encrypted session for the duration of your login only." },
+                  { title: '4. Authentication & Permissions', content: 'Authentication is handled entirely through Microsoft Entra ID (Azure AD) using the official OAuth 2.0 authorization code flow. We request only the minimum Graph API permissions required. Privileged permissions (DeviceManagementManagedDevices.PrivilegedOperations.All) are requested separately, only when you explicitly choose to enable remote actions.' },
+                  { title: '5. Audit Trail', content: 'In-app audit logs record actions you perform (device sync, reboot, reset commands) within your browser session. These logs are stored in memory only and cleared when you close or refresh the browser. You may export them as CSV at any time.' },
+                  { title: '6. Third-Party Services', content: "The App integrates exclusively with Microsoft Graph API (graph.microsoft.com). No third-party analytics, advertising, or tracking services are used. The optional AI Assistant button links to an external ChatGPT-based tool; its use is governed by OpenAI's privacy policy." },
+                  { title: '7. Your Rights', content: 'You may disconnect your Microsoft account at any time using the "Disconnect" option in the user menu. This destroys your session and removes all cached authentication data.' },
+                  { title: '8. Contact', content: 'For any privacy-related questions, please visit modernendpoint.tech or contact Menahem Suissa directly through the website.' },
+                ].map(section => (
+                  <div key={section.title} className="privacy-section">
+                    <h2 className="privacy-section-title">{section.title}</h2>
+                    <p className="privacy-section-body">{section.content}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          ) : !auth.connected ? (
             <div className="welcome-screen">
               <div className="welcome-hero">
                 <div className="welcome-logo-mark">EF</div>
@@ -1885,6 +1933,18 @@ export default function App() {
                   The all-in-one Intune enrollment intelligence platform for IT Admins —
                   diagnose failures, track compliance, and roll out with confidence.
                 </p>
+                <div
+                  style={{
+                    marginTop: 16,
+                    padding: '12px 14px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 12,
+                    background: 'rgba(255,255,255,0.03)',
+                    color: 'var(--text-secondary)'
+                  }}
+                >
+                  Viewing demo experience — sign in to connect your Microsoft tenant for live data.
+                </div>
                 <div className="welcome-actions">
                   <button className="btn btn-primary welcome-signin-btn" onClick={() => { window.location.href = '/api/auth/login'; }}>
                     🔑 Sign in with Microsoft
@@ -1892,6 +1952,32 @@ export default function App() {
                   <button className="btn welcome-tutorial-btn" onClick={() => setTutorialOpen(true)}>
                     ▶ Watch Tutorial
                   </button>
+                  <button className="btn btn-secondary" onClick={() => setCurrentView('privacy')}>
+                    Privacy Policy
+                  </button>
+                </div>
+              </div>
+
+              <div className="kpi-row" style={{ marginTop: 18 }}>
+                <div className="kpi-card">
+                  <div className="kpi-label">Enrollment Health Score</div>
+                  <div className="kpi-value">{demoDashboardData.healthScore}</div>
+                  <div className="kpi-sub">Sample tenant posture</div>
+                </div>
+                <div className="kpi-card">
+                  <div className="kpi-label">Total Devices</div>
+                  <div className="kpi-value">{demoDashboardData.totalDevices}</div>
+                  <div className="kpi-sub">Demo inventory</div>
+                </div>
+                <div className="kpi-card">
+                  <div className="kpi-label">Failed Enrollments</div>
+                  <div className="kpi-value">{demoDashboardData.failedEnrollments}</div>
+                  <div className="kpi-sub">Needs review</div>
+                </div>
+                <div className="kpi-card">
+                  <div className="kpi-label">Readiness Risks</div>
+                  <div className="kpi-value">{demoDashboardData.readinessRisks}</div>
+                  <div className="kpi-sub">Pre-flight gaps</div>
                 </div>
               </div>
 
@@ -1906,7 +1992,7 @@ export default function App() {
                 <div className="welcome-feature">
                   <span className="wf-icon">📈</span>
                   <div className="wf-text">
-                    <div className="wf-title">Live Reports</div>
+                    <div className="wf-title">Executive Reports</div>
                     <div className="wf-desc">Health scores, compliance rates & platform breakdown</div>
                   </div>
                 </div>
@@ -1921,14 +2007,14 @@ export default function App() {
                   <span className="wf-icon">🤖</span>
                   <div className="wf-text">
                     <div className="wf-title">AI Assistant</div>
-                    <div className="wf-desc">M-Intune Architect AI — Enterprise Edition</div>
+                    <div className="wf-desc">Guided troubleshooting and next-step recommendations</div>
                   </div>
                 </div>
               </div>
 
               <div className="welcome-footer">
                 © {new Date().getFullYear()} <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'none', fontWeight: 700 }}>modernendpoint.tech</a> · by Menahem Suissa ·{' '}
-                <button style={{ background: 'none', border: 'none', color: 'var(--amber)', cursor: 'pointer', fontWeight: 700, fontSize: 'inherit', fontFamily: 'inherit', padding: 0 }} onClick={() => setCurrentView('privacy' as ExtendedViewName)}>Privacy Policy</button>
+                <button style={{ background: 'none', border: 'none', color: 'var(--amber)', cursor: 'pointer', fontWeight: 700, fontSize: 'inherit', fontFamily: 'inherit', padding: 0 }} onClick={() => setCurrentView('privacy')}>Privacy Policy</button>
               </div>
 
               {/* Tutorial Modal */}
@@ -1941,12 +2027,12 @@ export default function App() {
                     </div>
                     <div className="tutorial-video-wrap">
                       <iframe
-  src="https://www.youtube-nocookie.com/embed/VoLX31W2kOI?rel=0&modestbranding=1"
-  title="Enrollment Flow Monitor – Tutorial"
-  referrerPolicy="strict-origin-when-cross-origin"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-  allowFullScreen
-/>
+                        src="https://www.youtube-nocookie.com/embed/VoLX31W2kOI?rel=0&modestbranding=1"
+                        title="Enrollment Flow Monitor – Tutorial"
+                        referrerPolicy="strict-origin-when-cross-origin"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                      />
                     </div>
                     <div className="tutorial-chapters">
                       <div className="tutorial-chapter-label">What's covered:</div>
@@ -2515,32 +2601,6 @@ export default function App() {
                   ))}
                 </div>
               )}
-            </div>
-
-          ) : currentView === 'privacy' ? (
-            <div className="privacy-shell">
-              <div className="privacy-header">
-                <button className="btn btn-secondary" style={{ fontSize: 11, marginBottom: 16, alignSelf: 'flex-start' }} onClick={() => setCurrentView(auth.connected ? 'dashboard' : 'home')}>← Back</button>
-                <h1 className="privacy-title">Privacy Policy</h1>
-                <p className="privacy-effective">Effective date: January 1, 2025 · <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" className="privacy-site-link">modernendpoint.tech</a></p>
-              </div>
-              <div className="privacy-body">
-                {[
-                  { title: '1. Introduction', content: 'Enrollment Flow Monitor ("the App") is operated by Menahem Suissa / modernendpoint.tech. This Privacy Policy explains how we collect, use, and protect information when you use the App to monitor Microsoft Intune enrollment data in your organization.' },
-                  { title: '2. Data We Access', content: "The App connects to Microsoft Graph API using delegated permissions granted by you or your organization's IT administrator. It accesses device management data including device names, compliance states, enrollment statuses, and user principal names solely to display them within the App interface." },
-                  { title: '3. Data Storage', content: "The App does not store, cache, or transmit your Microsoft tenant data to any external server owned by us. All Microsoft Graph data is fetched in real-time and displayed only in your browser session. Session data (authentication tokens) is stored server-side in an encrypted session for the duration of your login only." },
-                  { title: '4. Authentication & Permissions', content: 'Authentication is handled entirely through Microsoft Entra ID (Azure AD) using the official OAuth 2.0 authorization code flow. We request only the minimum Graph API permissions required. Privileged permissions (DeviceManagementManagedDevices.PrivilegedOperations.All) are requested separately, only when you explicitly choose to enable remote actions.' },
-                  { title: '5. Audit Trail', content: 'In-app audit logs record actions you perform (device sync, reboot, reset commands) within your browser session. These logs are stored in memory only and cleared when you close or refresh the browser. You may export them as CSV at any time.' },
-                  { title: '6. Third-Party Services', content: "The App integrates exclusively with Microsoft Graph API (graph.microsoft.com). No third-party analytics, advertising, or tracking services are used. The optional AI Assistant button links to an external ChatGPT-based tool; its use is governed by OpenAI's privacy policy." },
-                  { title: '7. Your Rights', content: 'You may disconnect your Microsoft account at any time using the "Disconnect" option in the user menu. This destroys your session and removes all cached authentication data.' },
-                  { title: '8. Contact', content: 'For any privacy-related questions, please visit modernendpoint.tech or contact Menahem Suissa directly through the website.' },
-                ].map(section => (
-                  <div key={section.title} className="privacy-section">
-                    <h2 className="privacy-section-title">{section.title}</h2>
-                    <p className="privacy-section-body">{section.content}</p>
-                  </div>
-                ))}
-              </div>
             </div>
 
           ) : (
