@@ -35,7 +35,16 @@ async function recordLoginSuccess(req, tokenResponse) {
                 createdAt: 'desc'
             }
         });
+        console.log('LOGIN_AUDIT_DEDUPE_CHECK', {
+            userPrincipalName,
+            tenantId,
+            hasRecentExisting: Boolean(recentExisting)
+        });
         if (recentExisting) {
+            console.log('LOGIN_AUDIT_SKIPPED_RECENT_DUPLICATE', {
+                userPrincipalName,
+                tenantId
+            });
             return;
         }
         await prisma.signInEvent.create({
@@ -47,6 +56,10 @@ async function recordLoginSuccess(req, tokenResponse) {
                 userAgent,
                 eventType: 'login_success'
             }
+        });
+        console.log('LOGIN_AUDIT_WRITTEN', {
+            userPrincipalName,
+            tenantId
         });
     }
     catch (error) {
@@ -80,7 +93,8 @@ authRouter.get('/status', (req, res) => {
         'DeviceManagementManagedDevices.PrivilegedOperations.All',
         'DeviceManagementManagedDevices.ReadWrite.All'
     ];
-    const hasWritePermissions = (writeScopes.some((s) => scopes.includes(s)) || req.session?.hasWritePermissions === true) && !!req.session?.writeAccessToken;
+    const hasWritePermissions = (writeScopes.some((s) => scopes.includes(s)) || req.session?.hasWritePermissions === true) &&
+        !!req.session?.writeAccessToken;
     return res.json({
         connected: true,
         upn: req.session.account.username ?? '',
@@ -106,10 +120,17 @@ authRouter.get('/login', async (req, res) => {
             : `${origin}/api/auth/callback`;
         const elevated = req.query.elevated === 'true';
         req.session.authRedirectUri = redirectUri;
-        req.session.authReturnUrl = config.webAppUrl !== 'http://localhost:5173'
-            ? config.webAppUrl
-            : origin;
+        req.session.authReturnUrl =
+            config.webAppUrl !== 'http://localhost:5173'
+                ? config.webAppUrl
+                : origin;
         req.session.authElevated = elevated;
+        console.log('AUTH_LOGIN_START', {
+            origin,
+            redirectUri,
+            returnUrl: req.session.authReturnUrl,
+            elevated
+        });
         const msal = getMsalApp();
         const scopes = elevated ? config.entra.scopesWrite : config.entra.scopes;
         const authCodeUrl = await msal.getAuthCodeUrl({
@@ -120,12 +141,23 @@ authRouter.get('/login', async (req, res) => {
         res.redirect(authCodeUrl);
     }
     catch (error) {
+        console.error('AUTH_LOGIN_FAILED', error);
         res.status(500).json({ message: error instanceof Error ? error.message : 'Login setup failed.' });
     }
 });
 authRouter.get('/callback', async (req, res) => {
+    console.log('AUTH_CALLBACK_START', {
+        url: req.originalUrl,
+        query: req.query,
+        hasCode: Boolean(req.query?.code),
+        hasSession: Boolean(req.session),
+        authElevated: req.session?.authElevated,
+        authRedirectUri: req.session?.authRedirectUri,
+        authReturnUrl: req.session?.authReturnUrl
+    });
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     if (!code) {
+        console.log('AUTH_CALLBACK_MISSING_CODE');
         return res.status(400).send('Missing auth code.');
     }
     try {
@@ -135,6 +167,12 @@ authRouter.get('/callback', async (req, res) => {
         const msal = getMsalApp();
         const scopes = isElevated ? config.entra.scopesWrite : config.entra.scopes;
         const tokenResponse = await msal.acquireTokenByCode({ code, scopes, redirectUri });
+        console.log('AUTH_CALLBACK_TOKEN', {
+            username: tokenResponse?.account?.username,
+            tenantId: tokenResponse?.tenantId,
+            isElevated,
+            hasAccessToken: Boolean(tokenResponse?.accessToken)
+        });
         if (isElevated) {
             req.session.writeAccessToken = tokenResponse?.accessToken;
             req.session.hasWritePermissions = true;
@@ -152,13 +190,27 @@ authRouter.get('/callback', async (req, res) => {
                 name: tokenResponse?.account?.name
             };
         }
+        console.log('AUTH_CALLBACK_BEFORE_AUDIT', {
+            username: tokenResponse?.account?.username,
+            tenantId: tokenResponse?.tenantId,
+            isElevated
+        });
         await recordLoginSuccess(req, tokenResponse);
+        console.log('AUTH_CALLBACK_AFTER_AUDIT', {
+            username: tokenResponse?.account?.username,
+            tenantId: tokenResponse?.tenantId,
+            isElevated
+        });
         req.session.authElevated = undefined;
         req.session.authRedirectUri = undefined;
         req.session.authReturnUrl = undefined;
+        console.log('AUTH_CALLBACK_REDIRECT', {
+            returnUrl
+        });
         res.redirect(returnUrl);
     }
     catch (error) {
+        console.error('AUTH_CALLBACK_FAILED', error);
         res.status(500).send(error instanceof Error ? error.message : 'Auth callback failed');
     }
 });
