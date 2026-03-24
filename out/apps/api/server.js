@@ -219,6 +219,39 @@ async function bootstrap() {
             logger.warn({ err }, 'Prisma migrate deploy failed — continuing (DB may already be up to date)');
         }
     }
+    // Ensure tables exist regardless of migration state (idempotent)
+    try {
+        const { prisma: db } = await import('./storage/prisma.js');
+        await db.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "SignInEvent" (
+        "id"                TEXT     NOT NULL PRIMARY KEY,
+        "createdAt"         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "eventType"         TEXT     NOT NULL DEFAULT 'login_success',
+        "userPrincipalName" TEXT,
+        "displayName"       TEXT,
+        "tenantId"          TEXT,
+        "ipAddress"         TEXT,
+        "userAgent"         TEXT
+      )
+    `);
+        await db.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Subscription" (
+        "id"            TEXT     NOT NULL PRIMARY KEY,
+        "email"         TEXT     NOT NULL,
+        "gumroadSaleId" TEXT,
+        "status"        TEXT     NOT NULL DEFAULT 'active',
+        "subscribedAt"  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "expiresAt"     DATETIME,
+        "updatedAt"     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+        await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_email_key" ON "Subscription"("email")`);
+        await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_gumroadSaleId_key" ON "Subscription"("gumroadSaleId")`);
+        logger.info('DB tables verified.');
+    }
+    catch (err) {
+        logger.warn({ err }, 'DB table verification failed — continuing');
+    }
     app.listen(config.port, () => {
         logger.info(`API listening on port ${config.port}`);
     });
