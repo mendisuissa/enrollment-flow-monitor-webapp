@@ -27,18 +27,18 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Generate Prisma client
         working-directory: apps/api
         env:
-        DATABASE_URL: "file:./dev.db"
+          DATABASE_URL: "file:./dev.db"
         run: npm run prisma:generate
 
       - name: Push Prisma schema
         working-directory: apps/api
         env:
-        DATABASE_URL: "file:./dev.db"
+          DATABASE_URL: "file:./dev.db"
         run: npx prisma db push --schema prisma/schema.prisma
 
       - name: Build workspaces
@@ -51,23 +51,23 @@ jobs:
         run: |
           echo "Checking root .prisma/client..."
           ls -la node_modules/.prisma/client || true
-          
+
       - name: Verify Prisma SignInEvent client
         working-directory: apps/api
         env:
-        DATABASE_URL: "file:./dev.db"
+          DATABASE_URL: "file:./dev.db"
         run: |
-        node - <<'NODE'
-        const { PrismaClient } = require('@prisma/client');
-        const prisma = new PrismaClient();
-        const keys = Object.keys(prisma).sort();
-        console.log(keys);
-        if (!keys.includes('signInEvent')) {
-         console.error('Prisma client does not include signInEvent');
-         process.exit(1);
-        }
-        prisma.$disconnect();
-        NODE
+          node - <<'NODE'
+          const { PrismaClient } = require('@prisma/client');
+          const prisma = new PrismaClient();
+          const keys = Object.keys(prisma).sort();
+          console.log(keys);
+          if (!keys.includes('signInEvent')) {
+            console.error('Prisma client does not include signInEvent');
+            process.exit(1);
+          }
+          prisma.$disconnect();
+          NODE
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
