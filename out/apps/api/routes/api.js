@@ -846,34 +846,26 @@ apiRouter.post('/graph/proxy', async (req, res) => {
         return res.status(500).json({ message: msg });
     }
 });
-// ── Enrollment Failures — via DeviceEnrollmentFailures exportJobs report ────
+// ── Enrollment Failures — via troubleshootingEvents ─────────────────────────
 apiRouter.get('/graph/enrollment-failures', async (req, res) => {
     try {
         const token = req.session?.accessToken;
         if (!token)
             return res.status(401).json({ message: 'Not authenticated.' });
         const GRAPH = 'https://graph.microsoft.com';
-        // Step 1: Create export job
-        const createRes = await fetch(`${GRAPH}/beta/deviceManagement/reports/exportJobs`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({
-                reportName: 'DeviceEnrollmentFailures',
-                format: 'json',
-                localizationType: 'localizedValuesAsAdditionalColumn',
-                select: ['UPN', 'FailureReason', 'OS', 'OSVersion', 'EnrollmentMethod', 'FailureDateTime'],
-            }),
+        const url = GRAPH + '/v1.0/deviceManagement/troubleshootingEvents?$top=200&$orderby=eventDateTime desc';
+        const response = await fetch(url, {
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
         });
-        if (!createRes.ok) {
-            const errData = await createRes.json().catch(() => ({}));
-            const msg = errData?.error?.message ?? createRes.statusText;
-            // Fallback to managedDevices if exportJobs not available
-            const fallbackRes = await fetch(`${GRAPH}/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName,deviceEnrollmentType&$top=200`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            const msg = errData?.error?.message ?? response.statusText;
+            const fallbackRes = await fetch(GRAPH + "/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName,deviceEnrollmentType&$top=200", { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } });
             if (!fallbackRes.ok) {
-                return res.status(createRes.status).json({ message: `Export unavailable: ${msg}. Fallback also failed.`, rows: [] });
+                return res.status(response.status).json({ message: 'Enrollment failures unavailable: ' + msg, rows: [] });
             }
             const fb = await fallbackRes.json();
-            const rows = (fb.value ?? []).map((item) => ({
+            const fbRows = (fb.value ?? []).map((item) => ({
                 failureDateTime: item.lastSyncDateTime ?? null,
                 failureReason: item.complianceState === 'noncompliant' ? 'Non-compliant device' : 'Compliance unknown',
                 failureCategory: item.complianceState ?? null,
@@ -884,84 +876,26 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
                 deviceId: item.id ?? null,
                 deviceName: item.deviceName ?? null,
             }));
-            return res.json({ rows, message: `${rows.length} record(s) loaded (fallback mode — exportJobs unavailable).` });
+            return res.json({ rows: fbRows, message: fbRows.length + ' record(s) loaded (fallback mode).' });
         }
-        const job = await createRes.json();
-        const jobId = job.id;
-        // Step 2: Poll until completed (max 30s, 6 x 5s)
-        let downloadUrl = '';
-        for (let attempt = 0; attempt < 6; attempt++) {
-            await new Promise(r => setTimeout(r, 5000));
-            const statusRes = await fetch(`${GRAPH}/beta/deviceManagement/reports/exportJobs('${jobId}')`, {
-                headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-            });
-            if (!statusRes.ok)
-                continue;
-            const statusData = await statusRes.json();
-            if (statusData.status === 'completed' && statusData.url) {
-                downloadUrl = statusData.url;
-                break;
-            }
-            if (statusData.status === 'failed') {
-                return res.status(502).json({ message: 'Export job failed on Microsoft side.', rows: [] });
-            }
-        }
-        if (!downloadUrl) {
-            return res.status(504).json({ message: 'Export job timed out after 30s. Try again.', rows: [] });
-        }
-        // Step 3: Download zip, parse JSON using built-in zlib (no extra deps)
-        const dlRes = await fetch(downloadUrl);
-        if (!dlRes.ok)
-            return res.status(502).json({ message: 'Failed to download report file.', rows: [] });
-        const buffer = Buffer.from(await dlRes.arrayBuffer());
-        // Use built-in zlib to unzip — the file is a standard zip containing one JSON file
-        const { unzipSync } = await import('zlib');
-        // Node's zlib doesn't natively parse zip format, use fflate-style manual parse
-        // ZIP local file header starts at offset 0: sig=PK\x03\x04
-        // Parse the first file entry manually
-        let jsonText = '';
-        let offset = 0;
-        while (offset < buffer.length - 4) {
-            const sig = buffer.readUInt32LE(offset);
-            if (sig !== 0x04034b50)
-                break; // local file header signature
-            const compression = buffer.readUInt16LE(offset + 8);
-            const compressedSize = buffer.readUInt32LE(offset + 18);
-            const fileNameLen = buffer.readUInt16LE(offset + 26);
-            const extraLen = buffer.readUInt16LE(offset + 28);
-            const dataOffset = offset + 30 + fileNameLen + extraLen;
-            const fileName = buffer.slice(offset + 30, offset + 30 + fileNameLen).toString('utf8');
-            const compressedData = buffer.slice(dataOffset, dataOffset + compressedSize);
-            if (fileName.endsWith('.json')) {
-                jsonText = compression === 0
-                    ? compressedData.toString('utf8')
-                    : unzipSync(compressedData).toString('utf8');
-                break;
-            }
-            offset = dataOffset + compressedSize;
-        }
-        if (!jsonText)
-            return res.status(502).json({ message: 'No JSON in report archive.', rows: [] });
-        const parsed = JSON.parse(jsonText);
-        const schema = parsed.Schema ?? [];
-        const values = parsed.Values ?? [];
-        const colNames = schema.map((s) => s.Column);
-        const rows = values.map(row => {
-            const obj = {};
-            colNames.forEach((col, i) => { obj[col] = row[i] ?? ''; });
-            return {
-                failureDateTime: obj['FailureDateTime'] ?? obj['LastModifiedDateTime'] ?? null,
-                failureReason: obj['FailureReason'] ?? obj['FailureCategory'] ?? '—',
-                failureCategory: obj['FailureCategory'] ?? null,
-                os: obj['OS'] ?? obj['OperatingSystem'] ?? null,
-                osVersion: obj['OSVersion'] ?? null,
-                userPrincipalName: obj['UPN'] ?? obj['UserPrincipalName'] ?? null,
-                enrollmentMethod: obj['EnrollmentMethod'] ?? null,
-                deviceId: obj['DeviceId'] ?? null,
-                deviceName: obj['DeviceName'] ?? null,
-            };
-        });
-        return res.json({ rows, message: `${rows.length} enrollment failure(s) loaded.` });
+        const data = await response.json();
+        const items = data?.value ?? [];
+        const enrollmentItems = items.filter((item) => item['@odata.type'] === '#microsoft.graph.enrollmentTroubleshootingEvent' ||
+            item.failureCategory !== undefined ||
+            item.enrollmentType !== undefined);
+        const rows = enrollmentItems.map((item) => ({
+            failureDateTime: item.eventDateTime ?? null,
+            failureReason: item.failureReason ?? item.failureCategory ?? '—',
+            failureCategory: item.failureCategory ?? null,
+            os: item.operatingSystem ?? null,
+            osVersion: item.osVersion ?? null,
+            userPrincipalName: item.userPrincipalName ?? item.userId ?? null,
+            enrollmentMethod: item.enrollmentType ?? null,
+            deviceId: item.deviceId ?? item.managedDeviceIdentifier ?? null,
+            deviceName: item.deviceId ?? item.managedDeviceIdentifier ?? null,
+            correlationId: item.correlationId ?? null,
+        }));
+        return res.json({ rows, message: rows.length + ' enrollment failure' + (rows.length !== 1 ? 's' : '') + ' loaded.' });
     }
     catch (error) {
         const msg = error instanceof Error ? error.message : 'Enrollment failures fetch failed.';

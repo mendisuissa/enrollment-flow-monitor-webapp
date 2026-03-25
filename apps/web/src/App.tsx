@@ -484,12 +484,90 @@ function EfmWalkthrough({ onSignIn }: { onSignIn: () => void }) {
 // ── EnrollmentFailuresView ────────────────────────────────────────────────────
 function getFixSteps(row: any, ERROR_CATALOG: any[]): { title: string; steps: string[]; matched: boolean } {
   const reason = (row.failureReason ?? row.failureCategory ?? '').toLowerCase();
+  const category = (row.failureCategory ?? '').toLowerCase();
   const os = (row.os ?? '').toLowerCase();
+
+  // Match by failureCategory from troubleshootingEvents (authentication, deviceLimit, etc.)
+  const categoryMap: Record<string, { title: string; steps: string[] }> = {
+    authentication: {
+      title: 'Authentication failure during enrollment',
+      steps: [
+        'Verify the user account is not blocked in Entra ID — check Sign-in logs for errors.',
+        'Confirm the user has an active Intune license assigned.',
+        'Check Conditional Access policies — ensure enrollment is not blocked by a CA rule.',
+        'Ask the user to sign out of Company Portal, restart, and try again.',
+        'Verify MDM Terms of Use have been accepted by the user.',
+      ],
+    },
+    deviceLimit: {
+      title: 'Device limit reached',
+      steps: [
+        'Go to Devices / Enrollment restrictions / Device limit restrictions.',
+        'Increase the limit for the user or remove an old enrolled device.',
+        'Check if the user has stale/duplicate device records in Entra ID — remove them.',
+        'Verify the user is not in a restrictive group with a lower device limit.',
+      ],
+    },
+    deviceNotSupported: {
+      title: 'Device type or platform not supported',
+      steps: [
+        'Go to Devices / Enrollment restrictions / Device type restrictions.',
+        'Ensure the platform (Android/iOS/Windows) is set to Allow.',
+        'Check if the device manufacturer or model is on a blocked list.',
+        'Verify the OS version meets the minimum version requirement in restrictions.',
+      ],
+    },
+    notLicensed: {
+      title: 'User not licensed for Intune',
+      steps: [
+        'Assign an Intune or EMS E3/E5 license to the user in Entra ID / Users / Licenses.',
+        'Wait 10–15 minutes for license propagation after assignment.',
+        'Verify the license includes the Intune service plan (not just the bundle).',
+        'Check if the license assignment was done via a group — confirm the user is in the group.',
+      ],
+    },
+    userAbandonment: {
+      title: 'User abandoned the enrollment flow',
+      steps: [
+        'This is informational — the user started but did not complete enrollment.',
+        'Follow up with the user and ask them to retry enrollment.',
+        'Verify Company Portal is up to date on the device.',
+        'Check for any blocking prompts the user may have dismissed (Terms of Use, MFA).',
+      ],
+    },
+    accountValidation: {
+      title: 'Account validation failed',
+      steps: [
+        'Verify the UPN (email) is correct and the account exists in Entra ID.',
+        'Check if the account is a guest or external user — these cannot enroll by default.',
+        'Ensure the user is in scope for MDM enrollment in Entra ID / Mobility.',
+        'Verify no name/UPN mismatch between on-prem AD and Entra ID (hybrid environments).',
+      ],
+    },
+    aadTokenError: {
+      title: 'Azure AD token error during enrollment',
+      steps: [
+        'Ask the user to sign out completely and sign back in with their work account.',
+        'Clear the Company Portal app cache and data.',
+        'Verify there are no Conditional Access policies blocking token issuance.',
+        'Check if MFA is enforced — the user may need to complete MFA first.',
+        'Review Entra ID Sign-in logs for the specific token failure.',
+      ],
+    },
+  };
+
+  if (category && categoryMap[category]) {
+    return { matched: true, ...categoryMap[category] };
+  }
+
+  // Match by failureReason text against ERROR_CATALOG
   const match = ERROR_CATALOG.find(e => {
     const t = e.title.toLowerCase();
     return reason.includes(t.slice(0, 20)) || t.includes(reason.slice(0, 20));
   });
   if (match) return { title: match.title, steps: match.actions, matched: true };
+
+  // OS-based fallback
   if (os.includes('android')) return { matched: false, title: 'Android enrollment — general steps', steps: [
     'Verify the user has an Intune license in Entra ID / Users / Licenses.',
     'Check Enrollment Restrictions: ensure Android platform is allowed.',
@@ -563,9 +641,9 @@ function EnrollmentFailuresView({ efRows, efLoading, efError, efSearch, setEfSea
         {efLoading ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', gap: 12 }}>
             <div style={{ fontSize: 28 }}>⏳</div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Generating report…</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Loading enrollment failures…</div>
             <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 320 }}>
-              Requesting enrollment failures from Intune. This takes up to 30 seconds.
+              Pulling troubleshooting events from Intune.
             </div>
             <div className="skeleton" style={{ width: '100%', marginTop: 8 }} />
             <div className="skeleton" style={{ width: '100%' }} />
@@ -624,7 +702,7 @@ function EnrollmentFailuresView({ efRows, efLoading, efError, efSearch, setEfSea
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>⛔ Failure Details</div>
             <button onClick={() => setSelectedEfRow(null)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
           </div>
-          {([['Failure', selectedEfRow.failureReason ?? selectedEfRow.failureCategory ?? '—'], ['User', selectedEfRow.userPrincipalName ?? selectedEfRow.userId ?? '—'], ['OS', `${selectedEfRow.os ?? '—'} ${selectedEfRow.osVersion ?? ''}`.trim()], ['Method', selectedEfRow.enrollmentMethod ?? selectedEfRow.deviceType ?? '—'], ['Date', selectedEfRow.failureDateTime ? new Date(selectedEfRow.failureDateTime).toLocaleString() : '—']] as [string, string][]).map(([label, val]) => (
+          {([['Failure', selectedEfRow.failureReason ?? selectedEfRow.failureCategory ?? '—'], ['Category', selectedEfRow.failureCategory ?? '—'], ['User', selectedEfRow.userPrincipalName ?? selectedEfRow.userId ?? '—'], ['OS', `${selectedEfRow.os ?? '—'} ${selectedEfRow.osVersion ?? ''}`.trim()], ['Method', selectedEfRow.enrollmentMethod ?? selectedEfRow.deviceType ?? '—'], ['Date', selectedEfRow.failureDateTime ? new Date(selectedEfRow.failureDateTime).toLocaleString() : '—'], ...(selectedEfRow.correlationId ? [['Correlation ID', selectedEfRow.correlationId] as [string,string]] : [])] as [string, string][]).map(([label, val]) => (
             <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }}>{label}</span>
               <span style={{ fontSize: 12, color: 'var(--text)', wordBreak: 'break-all' }}>{val}</span>

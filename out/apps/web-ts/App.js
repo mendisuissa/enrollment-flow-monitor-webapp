@@ -318,13 +318,87 @@ function EfmWalkthrough({ onSignIn }) {
 // ── EnrollmentFailuresView ────────────────────────────────────────────────────
 function getFixSteps(row, ERROR_CATALOG) {
     const reason = (row.failureReason ?? row.failureCategory ?? '').toLowerCase();
+    const category = (row.failureCategory ?? '').toLowerCase();
     const os = (row.os ?? '').toLowerCase();
+    // Match by failureCategory from troubleshootingEvents (authentication, deviceLimit, etc.)
+    const categoryMap = {
+        authentication: {
+            title: 'Authentication failure during enrollment',
+            steps: [
+                'Verify the user account is not blocked in Entra ID — check Sign-in logs for errors.',
+                'Confirm the user has an active Intune license assigned.',
+                'Check Conditional Access policies — ensure enrollment is not blocked by a CA rule.',
+                'Ask the user to sign out of Company Portal, restart, and try again.',
+                'Verify MDM Terms of Use have been accepted by the user.',
+            ],
+        },
+        deviceLimit: {
+            title: 'Device limit reached',
+            steps: [
+                'Go to Devices / Enrollment restrictions / Device limit restrictions.',
+                'Increase the limit for the user or remove an old enrolled device.',
+                'Check if the user has stale/duplicate device records in Entra ID — remove them.',
+                'Verify the user is not in a restrictive group with a lower device limit.',
+            ],
+        },
+        deviceNotSupported: {
+            title: 'Device type or platform not supported',
+            steps: [
+                'Go to Devices / Enrollment restrictions / Device type restrictions.',
+                'Ensure the platform (Android/iOS/Windows) is set to Allow.',
+                'Check if the device manufacturer or model is on a blocked list.',
+                'Verify the OS version meets the minimum version requirement in restrictions.',
+            ],
+        },
+        notLicensed: {
+            title: 'User not licensed for Intune',
+            steps: [
+                'Assign an Intune or EMS E3/E5 license to the user in Entra ID / Users / Licenses.',
+                'Wait 10–15 minutes for license propagation after assignment.',
+                'Verify the license includes the Intune service plan (not just the bundle).',
+                'Check if the license assignment was done via a group — confirm the user is in the group.',
+            ],
+        },
+        userAbandonment: {
+            title: 'User abandoned the enrollment flow',
+            steps: [
+                'This is informational — the user started but did not complete enrollment.',
+                'Follow up with the user and ask them to retry enrollment.',
+                'Verify Company Portal is up to date on the device.',
+                'Check for any blocking prompts the user may have dismissed (Terms of Use, MFA).',
+            ],
+        },
+        accountValidation: {
+            title: 'Account validation failed',
+            steps: [
+                'Verify the UPN (email) is correct and the account exists in Entra ID.',
+                'Check if the account is a guest or external user — these cannot enroll by default.',
+                'Ensure the user is in scope for MDM enrollment in Entra ID / Mobility.',
+                'Verify no name/UPN mismatch between on-prem AD and Entra ID (hybrid environments).',
+            ],
+        },
+        aadTokenError: {
+            title: 'Azure AD token error during enrollment',
+            steps: [
+                'Ask the user to sign out completely and sign back in with their work account.',
+                'Clear the Company Portal app cache and data.',
+                'Verify there are no Conditional Access policies blocking token issuance.',
+                'Check if MFA is enforced — the user may need to complete MFA first.',
+                'Review Entra ID Sign-in logs for the specific token failure.',
+            ],
+        },
+    };
+    if (category && categoryMap[category]) {
+        return { matched: true, ...categoryMap[category] };
+    }
+    // Match by failureReason text against ERROR_CATALOG
     const match = ERROR_CATALOG.find(e => {
         const t = e.title.toLowerCase();
         return reason.includes(t.slice(0, 20)) || t.includes(reason.slice(0, 20));
     });
     if (match)
         return { title: match.title, steps: match.actions, matched: true };
+    // OS-based fallback
     if (os.includes('android'))
         return { matched: false, title: 'Android enrollment — general steps', steps: [
                 'Verify the user has an Intune license in Entra ID / Users / Licenses.',
@@ -382,12 +456,12 @@ function EnrollmentFailuresView({ efRows, efLoading, efError, efSearch, setEfSea
                                     }).catch((err) => {
                                         setEfError(err?.response?.data?.message ?? err?.message ?? 'Refresh failed.');
                                     }).finally(() => setEfLoading(false));
-                                }, children: "\u21BA Refresh" })] }), _jsxs("div", { className: "error-catalog-filters", children: [_jsx("input", { className: "error-search", placeholder: "Search by user, failure, OS...", value: efSearch, onChange: e => { setEfSearch(e.target.value); setSelectedEfRow(null); } }), _jsx("div", { className: "error-filter-chips", children: ['all', 'Windows', 'iOS', 'Android', 'macOS'].map(f => (_jsx("button", { className: `filter-chip ${efOsFilter === f ? 'active' : ''}`, onClick: () => { setEfOsFilter(f); setSelectedEfRow(null); }, children: f }, f))) })] }), efLoading ? (_jsxs("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', gap: 12 }, children: [_jsx("div", { style: { fontSize: 28 }, children: "\u23F3" }), _jsx("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text)' }, children: "Generating report\u2026" }), _jsx("div", { style: { fontSize: 12, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 320 }, children: "Requesting enrollment failures from Intune. This takes up to 30 seconds." }), _jsx("div", { className: "skeleton", style: { width: '100%', marginTop: 8 } }), _jsx("div", { className: "skeleton", style: { width: '100%' } }), _jsx("div", { className: "skeleton", style: { width: '80%' } })] })) : efError ? (_jsxs("div", { className: "empty-state", children: [_jsx("div", { className: "empty-state-title", style: { color: 'var(--red)' }, children: "Failed to load" }), _jsx("div", { style: { fontSize: 13, color: 'var(--text-dim)', marginTop: 8 }, children: efError }), _jsx("div", { style: { fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }, children: "Make sure DeviceManagementManagedDevices.Read.All permission is granted." })] })) : efRows.length === 0 ? (_jsxs("div", { className: "empty-state", children: [_jsx("div", { className: "empty-state-title", children: "No enrollment failures found" }), _jsx("div", { children: "Your tenant has no recent enrollment failures \u2014 great sign!" })] })) : (_jsxs(_Fragment, { children: [_jsxs("div", { className: "error-catalog-count", children: [efFiltered.length, " failure", efFiltered.length !== 1 ? 's' : '', " found", selectedEfRow ? ' · row selected' : ' · click a row to view actions'] }), _jsx("div", { style: { overflowX: 'auto' }, children: _jsxs("table", { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 }, children: [_jsx("thead", { children: _jsx("tr", { style: { borderBottom: '2px solid var(--border)' }, children: ['Date', 'Failure', 'OS', 'OS Version', 'User', 'Method'].map(h => (_jsx("th", { style: { padding: '7px 10px', color: 'var(--text-dim)', fontWeight: 700, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', textAlign: 'left' }, children: h }, h))) }) }), _jsx("tbody", { children: efFiltered.map((r, i) => {
+                                }, children: "\u21BA Refresh" })] }), _jsxs("div", { className: "error-catalog-filters", children: [_jsx("input", { className: "error-search", placeholder: "Search by user, failure, OS...", value: efSearch, onChange: e => { setEfSearch(e.target.value); setSelectedEfRow(null); } }), _jsx("div", { className: "error-filter-chips", children: ['all', 'Windows', 'iOS', 'Android', 'macOS'].map(f => (_jsx("button", { className: `filter-chip ${efOsFilter === f ? 'active' : ''}`, onClick: () => { setEfOsFilter(f); setSelectedEfRow(null); }, children: f }, f))) })] }), efLoading ? (_jsxs("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', gap: 12 }, children: [_jsx("div", { style: { fontSize: 28 }, children: "\u23F3" }), _jsx("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text)' }, children: "Loading enrollment failures\u2026" }), _jsx("div", { style: { fontSize: 12, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 320 }, children: "Pulling troubleshooting events from Intune." }), _jsx("div", { className: "skeleton", style: { width: '100%', marginTop: 8 } }), _jsx("div", { className: "skeleton", style: { width: '100%' } }), _jsx("div", { className: "skeleton", style: { width: '80%' } })] })) : efError ? (_jsxs("div", { className: "empty-state", children: [_jsx("div", { className: "empty-state-title", style: { color: 'var(--red)' }, children: "Failed to load" }), _jsx("div", { style: { fontSize: 13, color: 'var(--text-dim)', marginTop: 8 }, children: efError }), _jsx("div", { style: { fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }, children: "Make sure DeviceManagementManagedDevices.Read.All permission is granted." })] })) : efRows.length === 0 ? (_jsxs("div", { className: "empty-state", children: [_jsx("div", { className: "empty-state-title", children: "No enrollment failures found" }), _jsx("div", { children: "Your tenant has no recent enrollment failures \u2014 great sign!" })] })) : (_jsxs(_Fragment, { children: [_jsxs("div", { className: "error-catalog-count", children: [efFiltered.length, " failure", efFiltered.length !== 1 ? 's' : '', " found", selectedEfRow ? ' · row selected' : ' · click a row to view actions'] }), _jsx("div", { style: { overflowX: 'auto' }, children: _jsxs("table", { style: { width: '100%', borderCollapse: 'collapse', fontSize: 12 }, children: [_jsx("thead", { children: _jsx("tr", { style: { borderBottom: '2px solid var(--border)' }, children: ['Date', 'Failure', 'OS', 'OS Version', 'User', 'Method'].map(h => (_jsx("th", { style: { padding: '7px 10px', color: 'var(--text-dim)', fontWeight: 700, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', textAlign: 'left' }, children: h }, h))) }) }), _jsx("tbody", { children: efFiltered.map((r, i) => {
                                                 const isSel = selectedEfRow === r;
                                                 return (_jsxs("tr", { onClick: () => setSelectedEfRow(isSel ? null : r), style: { borderBottom: '1px solid var(--border)', cursor: 'pointer', background: isSel ? 'var(--amber-dim)' : '', borderLeft: isSel ? '2px solid var(--amber)' : '2px solid transparent', transition: 'background .1s' }, onMouseEnter: e => { if (!isSel)
                                                         e.currentTarget.style.background = 'var(--navy-light, #1E2D42)'; }, onMouseLeave: e => { if (!isSel)
                                                         e.currentTarget.style.background = ''; }, children: [_jsx("td", { style: { padding: '7px 10px', whiteSpace: 'nowrap', color: 'var(--text-dim)', fontSize: 11 }, children: r.failureDateTime ? new Date(r.failureDateTime).toLocaleString() : '—' }), _jsx("td", { style: { padding: '7px 10px' }, children: _jsx("span", { style: { display: 'inline-block', background: 'rgba(239,68,68,.12)', color: 'var(--red)', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }, children: r.failureReason ?? r.failureCategory ?? '—' }) }), _jsx("td", { style: { padding: '7px 10px', fontSize: 12 }, children: r.os ?? '—' }), _jsx("td", { style: { padding: '7px 10px', color: 'var(--text-dim)', fontSize: 11 }, children: r.osVersion ?? '—' }), _jsx("td", { style: { padding: '7px 10px', fontSize: 12, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: r.userPrincipalName ?? r.userId ?? '—' }), _jsx("td", { style: { padding: '7px 10px', color: 'var(--text-dim)', fontSize: 11 }, children: r.enrollmentMethod ?? r.deviceType ?? '—' })] }, i));
-                                            }) })] }) })] }))] }), selectedEfRow && fix && (_jsxs("div", { style: { width: 300, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 14, position: 'sticky', top: 16 }, children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }, children: [_jsx("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)' }, children: "\u26D4 Failure Details" }), _jsx("button", { onClick: () => setSelectedEfRow(null), style: { background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }, children: "\u00D7" })] }), [['Failure', selectedEfRow.failureReason ?? selectedEfRow.failureCategory ?? '—'], ['User', selectedEfRow.userPrincipalName ?? selectedEfRow.userId ?? '—'], ['OS', `${selectedEfRow.os ?? '—'} ${selectedEfRow.osVersion ?? ''}`.trim()], ['Method', selectedEfRow.enrollmentMethod ?? selectedEfRow.deviceType ?? '—'], ['Date', selectedEfRow.failureDateTime ? new Date(selectedEfRow.failureDateTime).toLocaleString() : '—']].map(([label, val]) => (_jsxs("div", { style: { display: 'flex', flexDirection: 'column', gap: 2 }, children: [_jsx("span", { style: { fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }, children: label }), _jsx("span", { style: { fontSize: 12, color: 'var(--text)', wordBreak: 'break-all' }, children: val })] }, label))), _jsxs("div", { style: { borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }, children: [_jsx("div", { style: { fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }, children: "Actions" }), _jsxs("button", { className: "btn btn-secondary", style: { width: '100%', justifyContent: 'flex-start', gap: 8, fontSize: 12 }, disabled: !selectedEfRow.deviceId || efRetrying || !auth.hasWritePermissions, title: !auth.hasWritePermissions ? 'Write permissions required' : !selectedEfRow.deviceId ? 'No device ID — device may not have reached Intune yet' : '', onClick: async () => {
+                                            }) })] }) })] }))] }), selectedEfRow && fix && (_jsxs("div", { style: { width: 300, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 14, position: 'sticky', top: 16 }, children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }, children: [_jsx("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)' }, children: "\u26D4 Failure Details" }), _jsx("button", { onClick: () => setSelectedEfRow(null), style: { background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }, children: "\u00D7" })] }), [['Failure', selectedEfRow.failureReason ?? selectedEfRow.failureCategory ?? '—'], ['Category', selectedEfRow.failureCategory ?? '—'], ['User', selectedEfRow.userPrincipalName ?? selectedEfRow.userId ?? '—'], ['OS', `${selectedEfRow.os ?? '—'} ${selectedEfRow.osVersion ?? ''}`.trim()], ['Method', selectedEfRow.enrollmentMethod ?? selectedEfRow.deviceType ?? '—'], ['Date', selectedEfRow.failureDateTime ? new Date(selectedEfRow.failureDateTime).toLocaleString() : '—'], ...(selectedEfRow.correlationId ? [['Correlation ID', selectedEfRow.correlationId]] : [])].map(([label, val]) => (_jsxs("div", { style: { display: 'flex', flexDirection: 'column', gap: 2 }, children: [_jsx("span", { style: { fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }, children: label }), _jsx("span", { style: { fontSize: 12, color: 'var(--text)', wordBreak: 'break-all' }, children: val })] }, label))), _jsxs("div", { style: { borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }, children: [_jsx("div", { style: { fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }, children: "Actions" }), _jsxs("button", { className: "btn btn-secondary", style: { width: '100%', justifyContent: 'flex-start', gap: 8, fontSize: 12 }, disabled: !selectedEfRow.deviceId || efRetrying || !auth.hasWritePermissions, title: !auth.hasWritePermissions ? 'Write permissions required' : !selectedEfRow.deviceId ? 'No device ID — device may not have reached Intune yet' : '', onClick: async () => {
                                     if (!selectedEfRow.deviceId)
                                         return;
                                     setEfRetrying(true);
