@@ -922,15 +922,17 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
     const token = req.session?.accessToken;
     if (!token) return res.status(401).json({ message: 'Not authenticated.' });
 
-    // Try v1.0 first, fall back to beta
+    // Strategy: Graph has no universal enrollmentFailures endpoint (tenant/license dependent).
+    // We use managedDevices filtered by complianceState as a reliable proxy.
     const attempts = [
-      '/v1.0/deviceManagement/deviceEnrollmentFailures?$top=200&$orderby=failureDateTime desc',
-      '/beta/deviceManagement/deviceEnrollmentFailures?$top=200&$orderby=failureDateTime desc',
-      // Some tenants expose it via this alternate path
-      '/beta/deviceManagement/managedDevices?$filter=enrollmentState eq \'failed\'&$select=id,deviceName,operatingSystem,osVersion,userPrincipalName,enrollmentState,lastSyncDateTime&$top=200',
+      // 1. Beta endpoint — exists on some E3/E5 tenants
+      '/beta/deviceManagement/deviceEnrollmentFailures?$top=200',
+      // 2. v1.0 — non-compliant/unknown devices as proxy for enrollment issues
+      "/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName,deviceEnrollmentType,managementAgent&$top=200",
+      // 3. Beta fallback
+      "/beta/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName,deviceEnrollmentType,managementAgent&$top=200",
     ];
 
-    let rows: any[] = [];
     let lastError = '';
 
     for (const path of attempts) {
@@ -946,11 +948,12 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
         const data: any = await response.json();
         const items: any[] = data?.value ?? [];
 
-        // Normalize both endpoint shapes
-        rows = items.map(item => ({
+        const rows = items.map(item => ({
           failureDateTime: item.failureDateTime ?? item.lastSyncDateTime ?? null,
-          failureReason: item.failureReason ?? item.failureCategory ?? (item.enrollmentState === 'failed' ? 'Enrollment failed' : null),
-          failureCategory: item.failureCategory ?? null,
+          failureReason: item.failureReason ?? item.failureCategory ??
+            (item.complianceState === 'noncompliant' ? 'Non-compliant device' :
+             item.complianceState === 'unknown' ? 'Compliance unknown — enrollment may be incomplete' : 'Enrollment issue'),
+          failureCategory: item.failureCategory ?? item.complianceState ?? null,
           os: item.operatingSystem ?? item.os ?? null,
           osVersion: item.osVersion ?? null,
           userPrincipalName: item.userPrincipalName ?? item.userId ?? null,
@@ -959,15 +962,14 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
           deviceName: item.deviceName ?? null,
         }));
 
-        return res.json({ rows, message: `${rows.length} enrollment failure(s) loaded.` });
+        return res.json({ rows, message: `${rows.length} record(s) loaded.` });
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
       }
     }
 
-    // All attempts failed
     return res.status(502).json({
-      message: lastError || 'Could not fetch enrollment failures. Ensure DeviceManagementManagedDevices.Read.All permission is granted.',
+      message: lastError || 'Could not fetch enrollment data. Ensure DeviceManagementManagedDevices.Read.All permission is granted.',
       rows: []
     });
   } catch (error) {
