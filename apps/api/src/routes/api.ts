@@ -873,6 +873,13 @@ Last Sync: ${d.lastSyncDateTime}`
     if (String(req.params.view) === 'auditLogs') {
       return res.json({ rows: [], message: 'Audit Logs loaded.' });
     }
+    if (String(req.params.view) === 'enrollmentFailures') {
+      // Redirect to the dedicated handler logic inline
+      return res.status(200).json({ rows: [], message: 'Use /api/graph/enrollment-failures for live data.' });
+    }
+    if (String(req.params.view) === 'graphQuery') {
+      return res.json({ rows: [], message: 'Graph Explorer ready.' });
+    }
 
     return res.status(400).json({ message: `Unsupported view: ${req.params.view}` });
   } catch (error) {
@@ -916,62 +923,129 @@ apiRouter.post('/graph/proxy', async (req, res) => {
   }
 });
 
-// ── Enrollment Failures — pull from Graph ────────────────────────────────────
+// ── Enrollment Failures — via DeviceEnrollmentFailures exportJobs report ────
 apiRouter.get('/graph/enrollment-failures', async (req, res) => {
   try {
     const token = req.session?.accessToken;
     if (!token) return res.status(401).json({ message: 'Not authenticated.' });
 
-    // Strategy: Graph has no universal enrollmentFailures endpoint (tenant/license dependent).
-    // We use managedDevices filtered by complianceState as a reliable proxy.
-    const attempts = [
-      // 1. Beta endpoint — exists on some E3/E5 tenants
-      '/beta/deviceManagement/deviceEnrollmentFailures?$top=200',
-      // 2. v1.0 — non-compliant/unknown devices as proxy for enrollment issues
-      "/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName,deviceEnrollmentType,managementAgent&$top=200",
-      // 3. Beta fallback
-      "/beta/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName,deviceEnrollmentType,managementAgent&$top=200",
-    ];
+    const GRAPH = 'https://graph.microsoft.com';
 
-    let lastError = '';
+    // Step 1: Create export job
+    const createRes = await fetch(`${GRAPH}/beta/deviceManagement/reports/exportJobs`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        reportName: 'DeviceEnrollmentFailures',
+        format: 'json',
+        localizationType: 'localizedValuesAsAdditionalColumn',
+        select: ['UPN', 'FailureReason', 'OS', 'OSVersion', 'EnrollmentMethod', 'FailureDateTime'],
+      }),
+    });
 
-    for (const path of attempts) {
-      try {
-        const response = await fetch(`https://graph.microsoft.com${path}`, {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
-        });
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({}));
-          lastError = (err as any)?.error?.message ?? response.statusText;
-          continue;
-        }
-        const data: any = await response.json();
-        const items: any[] = data?.value ?? [];
+    if (!createRes.ok) {
+      const errData = await createRes.json().catch(() => ({}));
+      const msg = (errData as any)?.error?.message ?? createRes.statusText;
+      // Fallback to managedDevices if exportJobs not available
+      const fallbackRes = await fetch(
+        `${GRAPH}/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName,deviceEnrollmentType&$top=200`,
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+      );
+      if (!fallbackRes.ok) {
+        return res.status(createRes.status).json({ message: `Export unavailable: ${msg}. Fallback also failed.`, rows: [] });
+      }
+      const fb: any = await fallbackRes.json();
+      const rows = (fb.value ?? []).map((item: any) => ({
+        failureDateTime: item.lastSyncDateTime ?? null,
+        failureReason: item.complianceState === 'noncompliant' ? 'Non-compliant device' : 'Compliance unknown',
+        failureCategory: item.complianceState ?? null,
+        os: item.operatingSystem ?? null,
+        osVersion: item.osVersion ?? null,
+        userPrincipalName: item.userPrincipalName ?? null,
+        enrollmentMethod: item.deviceEnrollmentType ?? null,
+        deviceId: item.id ?? null,
+        deviceName: item.deviceName ?? null,
+      }));
+      return res.json({ rows, message: `${rows.length} record(s) loaded (fallback mode — exportJobs unavailable).` });
+    }
 
-        const rows = items.map(item => ({
-          failureDateTime: item.failureDateTime ?? item.lastSyncDateTime ?? null,
-          failureReason: item.failureReason ?? item.failureCategory ??
-            (item.complianceState === 'noncompliant' ? 'Non-compliant device' :
-             item.complianceState === 'unknown' ? 'Compliance unknown — enrollment may be incomplete' : 'Enrollment issue'),
-          failureCategory: item.failureCategory ?? item.complianceState ?? null,
-          os: item.operatingSystem ?? item.os ?? null,
-          osVersion: item.osVersion ?? null,
-          userPrincipalName: item.userPrincipalName ?? item.userId ?? null,
-          enrollmentMethod: item.enrollmentMethod ?? item.deviceEnrollmentType ?? item.managementAgent ?? null,
-          deviceId: item.id ?? null,
-          deviceName: item.deviceName ?? null,
-        }));
+    const job: any = await createRes.json();
+    const jobId: string = job.id;
 
-        return res.json({ rows, message: `${rows.length} record(s) loaded.` });
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
+    // Step 2: Poll until completed (max 30s, 6 x 5s)
+    let downloadUrl = '';
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const statusRes = await fetch(`${GRAPH}/beta/deviceManagement/reports/exportJobs('${jobId}')`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (!statusRes.ok) continue;
+      const statusData: any = await statusRes.json();
+      if (statusData.status === 'completed' && statusData.url) { downloadUrl = statusData.url; break; }
+      if (statusData.status === 'failed') {
+        return res.status(502).json({ message: 'Export job failed on Microsoft side.', rows: [] });
       }
     }
 
-    return res.status(502).json({
-      message: lastError || 'Could not fetch enrollment data. Ensure DeviceManagementManagedDevices.Read.All permission is granted.',
-      rows: []
+    if (!downloadUrl) {
+      return res.status(504).json({ message: 'Export job timed out after 30s. Try again.', rows: [] });
+    }
+
+    // Step 3: Download zip, parse JSON using built-in zlib (no extra deps)
+    const dlRes = await fetch(downloadUrl);
+    if (!dlRes.ok) return res.status(502).json({ message: 'Failed to download report file.', rows: [] });
+
+    const buffer = Buffer.from(await dlRes.arrayBuffer());
+    // Use built-in zlib to unzip — the file is a standard zip containing one JSON file
+    const { unzipSync } = await import('zlib');
+    // Node's zlib doesn't natively parse zip format, use fflate-style manual parse
+    // ZIP local file header starts at offset 0: sig=PK\x03\x04
+    // Parse the first file entry manually
+    let jsonText = '';
+    let offset = 0;
+    while (offset < buffer.length - 4) {
+      const sig = buffer.readUInt32LE(offset);
+      if (sig !== 0x04034b50) break; // local file header signature
+      const compression = buffer.readUInt16LE(offset + 8);
+      const compressedSize = buffer.readUInt32LE(offset + 18);
+      const fileNameLen = buffer.readUInt16LE(offset + 26);
+      const extraLen = buffer.readUInt16LE(offset + 28);
+      const dataOffset = offset + 30 + fileNameLen + extraLen;
+      const fileName = buffer.slice(offset + 30, offset + 30 + fileNameLen).toString('utf8');
+      const compressedData = buffer.slice(dataOffset, dataOffset + compressedSize);
+      if (fileName.endsWith('.json')) {
+        jsonText = compression === 0
+          ? compressedData.toString('utf8')
+          : unzipSync(compressedData).toString('utf8');
+        break;
+      }
+      offset = dataOffset + compressedSize;
+    }
+    if (!jsonText) return res.status(502).json({ message: 'No JSON in report archive.', rows: [] });
+
+    const parsed: any = JSON.parse(jsonText);
+    const schema: any[] = parsed.Schema ?? [];
+    const values: any[][] = parsed.Values ?? [];
+    const colNames = schema.map((s: any) => s.Column as string);
+
+    const rows = values.map(row => {
+      const obj: Record<string, string> = {};
+      colNames.forEach((col, i) => { obj[col] = row[i] ?? ''; });
+      return {
+        failureDateTime: obj['FailureDateTime'] ?? obj['LastModifiedDateTime'] ?? null,
+        failureReason: obj['FailureReason'] ?? obj['FailureCategory'] ?? '—',
+        failureCategory: obj['FailureCategory'] ?? null,
+        os: obj['OS'] ?? obj['OperatingSystem'] ?? null,
+        osVersion: obj['OSVersion'] ?? null,
+        userPrincipalName: obj['UPN'] ?? obj['UserPrincipalName'] ?? null,
+        enrollmentMethod: obj['EnrollmentMethod'] ?? null,
+        deviceId: obj['DeviceId'] ?? null,
+        deviceName: obj['DeviceName'] ?? null,
+      };
     });
+
+    return res.json({ rows, message: `${rows.length} enrollment failure(s) loaded.` });
+
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Enrollment failures fetch failed.';
     return res.status(500).json({ message: msg });

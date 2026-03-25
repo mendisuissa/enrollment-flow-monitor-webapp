@@ -561,7 +561,16 @@ function EnrollmentFailuresView({ efRows, efLoading, efError, efSearch, setEfSea
           </div>
         </div>
         {efLoading ? (
-          <div><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', gap: 12 }}>
+            <div style={{ fontSize: 28 }}>⏳</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Generating report…</div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 320 }}>
+              Requesting enrollment failures from Intune. This takes up to 30 seconds.
+            </div>
+            <div className="skeleton" style={{ width: '100%', marginTop: 8 }} />
+            <div className="skeleton" style={{ width: '100%' }} />
+            <div className="skeleton" style={{ width: '80%' }} />
+          </div>
         ) : efError ? (
           <div className="empty-state">
             <div className="empty-state-title" style={{ color: 'var(--red)' }}>Failed to load</div>
@@ -670,10 +679,10 @@ const GQ_TEMPLATES = [
   { label: 'Non-Compliant Devices', url: '/v1.0/deviceManagement/managedDevices?$filter=complianceState eq \'noncompliant\'&$select=deviceName,operatingSystem,userPrincipalName,lastSyncDateTime&$top=20' },
   { label: 'Enrollment Failures', url: '/v1.0/deviceManagement/managedDevices?$filter=complianceState eq \'noncompliant\' or complianceState eq \'unknown\'&$select=deviceName,operatingSystem,osVersion,complianceState,userPrincipalName,deviceEnrollmentType&$top=20' },
   { label: 'Active Users', url: '/v1.0/users?$filter=accountEnabled eq true&$select=displayName,userPrincipalName,mail&$top=20' },
-  { label: 'Autopilot Devices', url: '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$select=serialNumber,model,groupTag,deploymentProfileAssignmentStatus&$top=20' },
+  { label: 'Autopilot Devices', url: '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$select=serialNumber,model,groupTag,managedDeviceId&$top=20' },
   { label: 'Enrollment Restrictions', url: '/v1.0/deviceManagement/deviceEnrollmentConfigurations?$select=displayName,priority,createdDateTime,lastModifiedDateTime&$top=20' },
   { label: 'Compliance Policies', url: '/beta/deviceManagement/deviceCompliancePolicies?$select=id,displayName,lastModifiedDateTime&$top=20' },
-  { label: 'Config Profiles', url: '/beta/deviceManagement/deviceConfigurations?$select=id,displayName,lastModifiedDateTime&$top=20' },
+  { label: 'Config Profiles', url: '/v1.0/deviceManagement/deviceConfigurations?$select=id,displayName,lastModifiedDateTime&$top=20' },
 ];
 
 function GraphExplorerView({ gqUrl, setGqUrl, gqResult, setGqResult, gqLoading, setGqLoading, gqError, setGqError, gqSelectedTemplate, setGqSelectedTemplate, auth, api, addToast }: any) {
@@ -933,6 +942,11 @@ export default function App() {
       setStatusMessage('Admin dashboard loaded.');
       setDetailsSummary('Admin Dashboard');
       setDetailsText('Sign-in analytics and user activity.');
+      return;
+    }
+
+    if (view === 'enrollmentFailures' || view === 'graphQuery') {
+      // These views handle their own data loading independently
       return;
     }
 
