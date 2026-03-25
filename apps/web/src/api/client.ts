@@ -74,3 +74,13 @@ export async function saveIncidentWorkflow(signature: string, payload: { owner: 
   const response = await api.post(`/incidents/${encodeURIComponent(signature)}/workflow`, payload);
   return response.data as IncidentWorkflowRecord;
 }
+
+export async function graphProxy(url: string) {
+  const response = await api.post('/graph/proxy', { url });
+  return response.data;
+}
+
+export async function getEnrollmentFailures() {
+  const response = await api.get('/graph/enrollment-failures');
+  return response.data as { rows: Record<string, unknown>[]; message: string };
+}

@@ -53,4 +53,12 @@ export async function saveIncidentWorkflow(signature, payload) {
     const response = await api.post(`/incidents/${encodeURIComponent(signature)}/workflow`, payload);
     return response.data;
 }
+export async function graphProxy(url) {
+    const response = await api.post('/graph/proxy', { url });
+    return response.data;
+}
+export async function getEnrollmentFailures() {
+    const response = await api.get('/graph/enrollment-failures');
+    return response.data;
+}
 //# sourceMappingURL=client.js.map

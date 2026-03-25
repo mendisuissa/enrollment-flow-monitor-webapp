@@ -48,3 +48,8 @@ export declare function saveIncidentWorkflow(signature: string, payload: {
     status: IncidentWorkflowStatus;
     notes: string;
 }): Promise<IncidentWorkflowRecord>;
+export declare function graphProxy(url: string): Promise<any>;
+export declare function getEnrollmentFailures(): Promise<{
+    rows: Record<string, unknown>[];
+    message: string;
+}>;

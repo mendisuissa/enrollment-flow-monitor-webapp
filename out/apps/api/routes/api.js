@@ -808,4 +808,91 @@ Last Sync: ${d.lastSyncDateTime}`
         return res.status(500).json({ message: msg });
     }
 });
+// ── Graph Proxy — safe pass-through for Graph Explorer ────────────────────────
+apiRouter.post('/graph/proxy', async (req, res) => {
+    try {
+        const token = req.session?.accessToken;
+        if (!token)
+            return res.status(401).json({ message: 'Not authenticated.' });
+        const rawUrl = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+        if (!rawUrl)
+            return res.status(400).json({ message: 'Missing url in request body.' });
+        // Only allow graph.microsoft.com paths
+        const path = rawUrl.startsWith('https://graph.microsoft.com')
+            ? rawUrl.replace('https://graph.microsoft.com', '')
+            : rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`;
+        if (!path.startsWith('/v1.0/') && !path.startsWith('/beta/')) {
+            return res.status(400).json({ message: 'URL must start with /v1.0/ or /beta/' });
+        }
+        const response = await fetch(`https://graph.microsoft.com${path}`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            const errMsg = data?.error?.message ?? response.statusText ?? 'Graph error';
+            return res.status(response.status).json({ message: errMsg, graphError: data });
+        }
+        return res.json(data);
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : 'Graph proxy failed.';
+        return res.status(500).json({ message: msg });
+    }
+});
+// ── Enrollment Failures — pull from Graph ────────────────────────────────────
+apiRouter.get('/graph/enrollment-failures', async (req, res) => {
+    try {
+        const token = req.session?.accessToken;
+        if (!token)
+            return res.status(401).json({ message: 'Not authenticated.' });
+        // Try v1.0 first, fall back to beta
+        const attempts = [
+            '/v1.0/deviceManagement/deviceEnrollmentFailures?$top=200&$orderby=failureDateTime desc',
+            '/beta/deviceManagement/deviceEnrollmentFailures?$top=200&$orderby=failureDateTime desc',
+            // Some tenants expose it via this alternate path
+            '/beta/deviceManagement/managedDevices?$filter=enrollmentState eq \'failed\'&$select=id,deviceName,operatingSystem,osVersion,userPrincipalName,enrollmentState,lastSyncDateTime&$top=200',
+        ];
+        let rows = [];
+        let lastError = '';
+        for (const path of attempts) {
+            try {
+                const response = await fetch(`https://graph.microsoft.com${path}`, {
+                    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+                });
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    lastError = err?.error?.message ?? response.statusText;
+                    continue;
+                }
+                const data = await response.json();
+                const items = data?.value ?? [];
+                // Normalize both endpoint shapes
+                rows = items.map(item => ({
+                    failureDateTime: item.failureDateTime ?? item.lastSyncDateTime ?? null,
+                    failureReason: item.failureReason ?? item.failureCategory ?? (item.enrollmentState === 'failed' ? 'Enrollment failed' : null),
+                    failureCategory: item.failureCategory ?? null,
+                    os: item.operatingSystem ?? item.os ?? null,
+                    osVersion: item.osVersion ?? null,
+                    userPrincipalName: item.userPrincipalName ?? item.userId ?? null,
+                    enrollmentMethod: item.enrollmentMethod ?? item.deviceEnrollmentType ?? item.managementAgent ?? null,
+                    deviceId: item.id ?? null,
+                    deviceName: item.deviceName ?? null,
+                }));
+                return res.json({ rows, message: `${rows.length} enrollment failure(s) loaded.` });
+            }
+            catch (err) {
+                lastError = err instanceof Error ? err.message : String(err);
+            }
+        }
+        // All attempts failed
+        return res.status(502).json({
+            message: lastError || 'Could not fetch enrollment failures. Ensure DeviceManagementManagedDevices.Read.All permission is granted.',
+            rows: []
+        });
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : 'Enrollment failures fetch failed.';
+        return res.status(500).json({ message: msg });
+    }
+});
 //# sourceMappingURL=api.js.map

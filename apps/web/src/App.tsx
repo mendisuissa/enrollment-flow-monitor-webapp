@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { IncidentWorkflowRecord, IncidentWorkflowStatus, ViewName } from '@efm/shared';
-type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home' | 'adminDashboard';
+type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home' | 'adminDashboard' | 'graphQuery' | 'enrollmentFailures';
 import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction, getExportUrl, getIncidentWorkflows, saveIncidentWorkflow } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
@@ -59,11 +59,13 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'macEnrollment', label: 'macOS Enrollment', icon: '🍎' },
   { id: 'ocr', label: 'OCR', icon: '🧠' },
   { id: 'incidents', label: 'Fix Queue', icon: '🚨' },
+  { id: 'enrollmentFailures', label: 'Enrollment Failures', icon: '⛔' },
   { id: 'permissionCheck', label: 'Access Validation', icon: '🔑' },
   { id: 'enrollmentErrorCatalog', label: 'Failure Catalog', icon: '📚' },
   { id: 'reports', label: 'Executive Reports', icon: '📈' },
   { id: 'readinessChecklist', label: 'Readiness Risks', icon: '✅' },
-  { id: 'auditLogs', label: 'Audit Trail', icon: '📋' }
+  { id: 'auditLogs', label: 'Audit Trail', icon: '📋' },
+  { id: 'graphQuery', label: 'Graph Explorer', icon: '⚡' },
 ];
 
 function toText(value: unknown): string {
@@ -510,6 +512,22 @@ export default function App() {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // ── Graph Explorer state ─────────────────────────────────
+  const [gqUrl, setGqUrl] = useState('/v1.0/deviceManagement/managedDevices?$top=10&$select=deviceName,operatingSystem,complianceState,lastSyncDateTime,userPrincipalName');
+  const [gqResult, setGqResult] = useState<any>(null);
+  const [gqLoading, setGqLoading] = useState(false);
+  const [gqError, setGqError] = useState('');
+  const [gqSelectedTemplate, setGqSelectedTemplate] = useState('');
+
+  // ── Enrollment Failures state ────────────────────────────
+  const [efRows, setEfRows] = useState<any[]>([]);
+  const [efLoading, setEfLoading] = useState(false);
+  const [efError, setEfError] = useState('');
+  const [efSearch, setEfSearch] = useState('');
+  const [efOsFilter, setEfOsFilter] = useState('all');
+  const [selectedEfRow, setSelectedEfRow] = useState<any>(null);
+  const [efRetrying, setEfRetrying] = useState(false);
+
   // ✅ FIX: badge counts state for sidebar
   const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({});
   const [incidentWorkflows, setIncidentWorkflows] = useState<Record<string, IncidentWorkflowRecord>>({});
@@ -724,6 +742,33 @@ export default function App() {
       setStatusMessage('Failure Catalog: Browse known errors and fixes.');
       setDetailsSummary('Failure Catalog');
       setDetailsText('Select an error card to see details and remediation steps.');
+      return;
+    }
+    if (currentView === 'graphQuery') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Graph Explorer ready. Select a template or enter a custom URL.');
+      setDetailsSummary('Graph Explorer');
+      setDetailsText('Run Graph API queries against your tenant in real-time.');
+      setGqResult(null);
+      setGqError('');
+      return;
+    }
+    if (currentView === 'enrollmentFailures') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Loading enrollment failures...');
+      setDetailsSummary('Enrollment Failures');
+      setEfLoading(true);
+      setEfError('');
+      api.get('/graph/enrollment-failures').then((res: any) => {
+        setEfRows(res.data.rows ?? []);
+        setStatusMessage(`Enrollment Failures loaded — ${(res.data.rows ?? []).length} record(s).`);
+      }).catch((err: any) => {
+        const msg = err?.response?.data?.message ?? err?.message ?? 'Failed to load enrollment failures.';
+        setEfError(msg);
+        setStatusMessage('Enrollment Failures load failed.');
+      }).finally(() => setEfLoading(false));
       return;
     }
     if (currentView === 'reports') {
@@ -2002,14 +2047,13 @@ export default function App() {
         <div className="topbar-actions">
           {/* Search — always visible */}
           <button
-  className="btn btn-secondary"
-  style={{ fontSize: 11, marginBottom: 16, alignSelf: 'flex-start' }}
-  onClick={() => setCurrentView(auth.connected ? 'dashboard' : 'home')}
->
-  ← Back
-</button>
+            className="btn btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={() => { setSearchOpen(true); setTimeout(() => globalSearchRef.current?.focus(), 50); }}
+          >
             <span>🔍</span>
-            {!isMobile && <span style={{ color: 'var(--text-dim)', fontSize: '10px', fontFamily: 'DM Mono, monospace' }}>Ctrl+K</span>}
+            <span>Search</span>
+          </button>
 
 
           {/* Theme — hidden on mobile (accessible from sidebar) */}
@@ -2904,7 +2948,316 @@ export default function App() {
               )}
             </div>
 
-          ) : (
+          ) : currentView === 'enrollmentFailures' ? (() => {
+            // ── Fix matcher: specific catalog match → fallback by OS ──────────
+            const getFixSteps = (row: any): { title: string; steps: string[]; matched: boolean } => {
+              const reason = (row.failureReason ?? row.failureCategory ?? '').toLowerCase();
+              const os = (row.os ?? '').toLowerCase();
+              const match = ERROR_CATALOG.find(e => {
+                const titleLower = e.title.toLowerCase();
+                return reason.includes(titleLower.slice(0, 20)) || titleLower.includes(reason.slice(0, 20));
+              });
+              if (match) return { title: match.title, steps: match.actions, matched: true };
+              if (os.includes('android')) return { title: 'Android enrollment — general steps', matched: false, steps: [
+                'Verify the user has an Intune license in Entra ID > Users > Licenses.',
+                'Check Enrollment Restrictions: ensure Android platform is allowed.',
+                'Ask user to clear Company Portal data and retry enrollment.',
+                'Confirm Android Enterprise is configured: Devices > Android > Android enrollment.',
+                'Check blocked device manufacturer/model list.',
+              ]};
+              if (os.includes('ios') || os.includes('ipad')) return { title: 'iOS/iPadOS enrollment — general steps', matched: false, steps: [
+                'Verify APNs certificate is valid: Devices > iOS/iPadOS enrollment > Apple MDM Push Certificate.',
+                'Confirm user has Intune license and is in MDM user scope.',
+                'Ask user to delete management profile and re-enroll via Company Portal.',
+                'Check Enrollment Restrictions for iOS platform allowance.',
+                'For ADE/DEP — verify profile is assigned in Apple Business Manager.',
+              ]};
+              if (os.includes('windows')) return { title: 'Windows enrollment — general steps', matched: false, steps: [
+                'Run dsregcmd /status — verify AzureAdJoined and MdmEnrolled.',
+                'Check MDM User Scope in Entra ID > Mobility: set to All or add user to group.',
+                'Verify Intune license is assigned. Check Enrollment Restrictions.',
+                'Run w32tm /resync to fix clock skew issues.',
+                'Re-enroll: Settings > Accounts > Access work or school > Connect.',
+              ]};
+              if (os.includes('mac')) return { title: 'macOS enrollment — general steps', matched: false, steps: [
+                'Verify APNs certificate is valid and not expired.',
+                'User must approve MDM in System Settings > Privacy & Security.',
+                'Check Enrollment Restrictions for macOS platform allowance.',
+                'For ADE — verify profile is assigned in Apple Business Manager.',
+                'Confirm user has Intune license and is in scope.',
+              ]};
+              return { title: 'General enrollment troubleshooting', matched: false, steps: [
+                'Verify user has a valid Intune license in Entra ID > Users > Licenses.',
+                'Check Enrollment Restrictions: Devices > Enrollment restrictions.',
+                'Confirm MDM User Scope includes this user: Entra ID > Mobility.',
+                'Review Conditional Access policies that may block enrollment.',
+                'Check Intune Service Health for any ongoing outages.',
+              ]};
+            };
+
+            const efFiltered = efRows.filter(r => {
+              const matchOs = efOsFilter === 'all' || (r.os ?? '').toLowerCase().includes(efOsFilter.toLowerCase());
+              const matchSearch = !efSearch || Object.values(r).some(v => String(v).toLowerCase().includes(efSearch.toLowerCase()));
+              return matchOs && matchSearch;
+            });
+
+            const fix = selectedEfRow ? getFixSteps(selectedEfRow) : null;
+
+            return (
+              <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                <div className="error-catalog-shell" style={{ flex: 1, minWidth: 0 }}>
+                  <div className="error-catalog-header">
+                    <div>
+                      <div className="error-catalog-title">⛔ Enrollment Failures</div>
+                      <div className="error-catalog-subtitle">Live from Intune via Graph API · click a row to act</div>
+                    </div>
+                    <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => {
+                      setEfLoading(true); setEfError(''); setSelectedEfRow(null);
+                      api.get('/graph/enrollment-failures').then((res: any) => {
+                        setEfRows(res.data.rows ?? []);
+                        addToast('success', `Refreshed — ${(res.data.rows ?? []).length} record(s)`);
+                      }).catch((err: any) => {
+                        setEfError(err?.response?.data?.message ?? err?.message ?? 'Refresh failed.');
+                      }).finally(() => setEfLoading(false));
+                    }}>↺ Refresh</button>
+                  </div>
+                  <div className="error-catalog-filters">
+                    <input className="error-search" placeholder="🔍 Search by user, failure, OS..." value={efSearch} onChange={e => { setEfSearch(e.target.value); setSelectedEfRow(null); }} />
+                    <div className="error-filter-chips">
+                      {(['all', 'Windows', 'iOS', 'Android', 'macOS'] as const).map(f => (
+                        <button key={f} className={`filter-chip ${efOsFilter === f ? 'active' : ''}`} onClick={() => { setEfOsFilter(f); setSelectedEfRow(null); }}>{f}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {efLoading ? (
+                    <div><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
+                  ) : efError ? (
+                    <div className="empty-state">
+                      <div className="empty-state-title" style={{ color: 'var(--red)' }}>⚠ Failed to load</div>
+                      <div style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 8 }}>{efError}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>Make sure DeviceManagementManagedDevices.Read.All permission is granted.</div>
+                    </div>
+                  ) : efRows.length === 0 ? (
+                    <div className="empty-state">
+                      <div className="empty-state-title">No enrollment failures found</div>
+                      <div>Your tenant has no recent enrollment failures — great sign!</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="error-catalog-count">
+                        {efFiltered.length} failure{efFiltered.length !== 1 ? 's' : ''} found{selectedEfRow ? ' · row selected' : ' · click a row to view actions'}
+                      </div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                              {['Date', 'Failure', 'OS', 'OS Version', 'User', 'Method'].map(h => (
+                                <th key={h} style={{ padding: '7px 10px', color: 'var(--text-dim)', fontWeight: 700, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', whiteSpace: 'nowrap', textAlign: 'left' }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {efFiltered.map((r, i) => {
+                              const isSel = selectedEfRow === r;
+                              return (
+                                <tr key={i} onClick={() => setSelectedEfRow(isSel ? null : r)}
+                                  style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: isSel ? 'var(--amber-dim)' : '', borderLeft: isSel ? '2px solid var(--amber)' : '2px solid transparent', transition: 'background .1s' }}
+                                  onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = 'var(--navy-light, #1E2D42)'; }}
+                                  onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = ''; }}
+                                >
+                                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap', color: 'var(--text-dim)', fontSize: 11 }}>{r.failureDateTime ? new Date(r.failureDateTime).toLocaleString() : '—'}</td>
+                                  <td style={{ padding: '7px 10px' }}><span style={{ display: 'inline-block', background: 'rgba(239,68,68,.12)', color: 'var(--red)', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{r.failureReason ?? r.failureCategory ?? '—'}</span></td>
+                                  <td style={{ padding: '7px 10px', fontSize: 12 }}>{r.os ?? '—'}</td>
+                                  <td style={{ padding: '7px 10px', color: 'var(--text-dim)', fontSize: 11 }}>{r.osVersion ?? '—'}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: 12, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.userPrincipalName ?? r.userId ?? '—'}</td>
+                                  <td style={{ padding: '7px 10px', color: 'var(--text-dim)', fontSize: 11 }}>{r.enrollmentMethod ?? r.deviceType ?? '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {selectedEfRow && fix && (
+                  <div style={{ width: 300, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 14, position: 'sticky', top: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>⛔ Failure Details</div>
+                      <button onClick={() => setSelectedEfRow(null)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
+                    </div>
+                    {([['Failure', selectedEfRow.failureReason ?? selectedEfRow.failureCategory ?? '—'], ['User', selectedEfRow.userPrincipalName ?? selectedEfRow.userId ?? '—'], ['OS', `${selectedEfRow.os ?? '—'} ${selectedEfRow.osVersion ?? ''}`.trim()], ['Method', selectedEfRow.enrollmentMethod ?? selectedEfRow.deviceType ?? '—'], ['Date', selectedEfRow.failureDateTime ? new Date(selectedEfRow.failureDateTime).toLocaleString() : '—']] as [string,string][]).map(([label, val]) => (
+                      <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }}>{label}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text)', wordBreak: 'break-all' }}>{val}</span>
+                      </div>
+                    ))}
+                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }}>Actions</div>
+                      <button className="btn btn-secondary" style={{ width: '100%', justifyContent: 'flex-start', gap: 8, fontSize: 12 }}
+                        disabled={!selectedEfRow.deviceId || efRetrying || !auth.hasWritePermissions}
+                        title={!auth.hasWritePermissions ? 'Write permissions required' : !selectedEfRow.deviceId ? 'No device ID — device may not have reached Intune yet' : ''}
+                        onClick={async () => {
+                          if (!selectedEfRow.deviceId) return;
+                          setEfRetrying(true);
+                          try {
+                            await api.post(`/devices/${selectedEfRow.deviceId}/sync`);
+                            addToast('success', `Sync sent to ${selectedEfRow.deviceName ?? selectedEfRow.deviceId}`);
+                          } catch (err: any) {
+                            addToast('error', err?.response?.data?.message ?? 'Sync failed — device may not be enrolled yet.');
+                          } finally { setEfRetrying(false); }
+                        }}>
+                        <span>🔁</span><span>{efRetrying ? 'Sending sync…' : 'Retry / Sync Device'}</span>
+                      </button>
+                      {(!selectedEfRow.deviceId || !auth.hasWritePermissions) && (
+                        <div style={{ fontSize: 10, color: 'var(--text-dim)', paddingLeft: 2 }}>
+                          {!auth.hasWritePermissions ? '⚠ Write permissions required.' : '⚠ No device ID — device may not have reached Intune yet.'}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }}>💡 Fix Steps</div>
+                        <span style={{ fontSize: 9, background: fix.matched ? 'rgba(16,185,129,.15)' : 'var(--amber-dim)', color: fix.matched ? 'var(--green)' : 'var(--amber)', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>
+                          {fix.matched ? 'CATALOG MATCH' : 'GENERIC'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{fix.title}</div>
+                      <ol style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {fix.steps.map((step, i) => (
+                          <li key={i} style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5 }}>{step}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })() : currentView === 'graphQuery' ? (() => {
+            const GQ_TEMPLATES = [
+              { label: 'Managed Devices', url: '/v1.0/deviceManagement/managedDevices?$top=20&$select=deviceName,operatingSystem,complianceState,lastSyncDateTime,userPrincipalName' },
+              { label: 'Compliance Policies', url: '/v1.0/deviceManagement/deviceCompliancePolicies?$select=id,displayName,lastModifiedDateTime' },
+              { label: 'Enrollment Failures', url: '/beta/deviceManagement/deviceEnrollmentFailures?$top=50' },
+              { label: 'Active Users', url: '/v1.0/users?$filter=accountEnabled eq true&$select=displayName,userPrincipalName,mail&$top=20' },
+              { label: 'Autopilot Devices', url: '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$select=serialNumber,model,groupTag,deploymentProfileAssignmentStatus&$top=20' },
+              { label: 'Enrollment Restrictions', url: '/v1.0/deviceManagement/deviceEnrollmentConfigurations?$select=displayName,deviceEnrollmentConfigurationType,priority' },
+              { label: 'Config Profiles', url: '/v1.0/deviceManagement/deviceConfigurations?$select=id,displayName,lastModifiedDateTime&$top=20' },
+              { label: 'Non-Compliant Devices', url: '/v1.0/deviceManagement/managedDevices?$filter=complianceState eq \'noncompliant\'&$select=deviceName,operatingSystem,userPrincipalName,lastSyncDateTime&$top=20' },
+            ];
+            const runQuery = async () => {
+              if (!gqUrl.trim()) return;
+              setGqLoading(true); setGqError(''); setGqResult(null);
+              try {
+                const res = await api.post('/graph/proxy', { url: gqUrl.trim() });
+                setGqResult((res as any).data);
+              } catch (err: any) {
+                setGqError(err?.response?.data?.message ?? err?.message ?? 'Query failed.');
+              } finally {
+                setGqLoading(false);
+              }
+            };
+            const resultRows: any[] = gqResult?.value ?? (Array.isArray(gqResult?.rows) ? gqResult.rows : gqResult && !gqResult.value ? [gqResult] : []);
+            const colKeys = resultRows.length > 0 ? Object.keys(resultRows[0]).filter(k => !k.startsWith('@')) : [];
+            return (
+              <div className="error-catalog-shell">
+                <div className="error-catalog-header">
+                  <div>
+                    <div className="error-catalog-title">⚡ Graph Explorer</div>
+                    <div className="error-catalog-subtitle">Run Microsoft Graph API queries against your tenant in real-time</div>
+                  </div>
+                  <a className="btn-ai-inline" href="https://developer.microsoft.com/en-us/graph/graph-explorer" target="_blank" rel="noopener noreferrer">↗ Graph Explorer</a>
+                </div>
+
+                {/* Template chips */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  {GQ_TEMPLATES.map(t => (
+                    <button key={t.label} className={`filter-chip ${gqSelectedTemplate === t.label ? 'active' : ''}`} onClick={() => { setGqUrl(t.url); setGqSelectedTemplate(t.label); setGqResult(null); setGqError(''); }}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* URL bar */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', flex: 1, alignItems: 'center', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '0 12px', gap: 8 }}>
+                    <span style={{ color: 'var(--text-dim)', fontSize: 12, whiteSpace: 'nowrap', fontFamily: 'DM Mono, monospace' }}>GET</span>
+                    <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>graph.microsoft.com</span>
+                    <input
+                      value={gqUrl}
+                      onChange={e => { setGqUrl(e.target.value); setGqSelectedTemplate(''); }}
+                      onKeyDown={e => e.key === 'Enter' && runQuery()}
+                      style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', fontFamily: 'DM Mono, monospace', fontSize: 13, padding: '10px 0' }}
+                      placeholder="/v1.0/deviceManagement/managedDevices"
+                    />
+                  </div>
+                  <button className="btn btn-primary" onClick={runQuery} disabled={gqLoading || !auth.connected} style={{ minWidth: 80 }}>
+                    {gqLoading ? '⏳' : '▶ Run'}
+                  </button>
+                </div>
+
+                {!auth.connected && (
+                  <div className="empty-state" style={{ marginBottom: 16 }}>
+                    <div className="empty-state-title">Sign in required</div>
+                    <div>Connect your Microsoft tenant to run live Graph queries.</div>
+                  </div>
+                )}
+
+                {gqLoading && <div><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>}
+
+                {gqError && (
+                  <div style={{ background: 'rgba(239,68,68,.1)', border: '1px solid var(--red)', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                    <div style={{ color: 'var(--red)', fontWeight: 600, marginBottom: 4 }}>⚠ Query Error</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>{gqError}</div>
+                  </div>
+                )}
+
+                {gqResult && !gqLoading && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                        {resultRows.length > 0 ? `${resultRows.length} row${resultRows.length !== 1 ? 's' : ''} returned` : 'Response received'}
+                        {gqResult['@odata.count'] ? ` (total: ${gqResult['@odata.count']})` : ''}
+                      </div>
+                      <button className="btn btn-secondary" style={{ fontSize: 11 }} onClick={() => {
+                        navigator.clipboard.writeText(JSON.stringify(gqResult, null, 2));
+                        addToast('success', 'Copied to clipboard');
+                      }}>📋 Copy JSON</button>
+                    </div>
+
+                    {resultRows.length > 0 && colKeys.length > 0 ? (
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                          <thead>
+                            <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                              {colKeys.map(k => (
+                                <th key={k} style={{ padding: '8px 12px', textAlign: 'left', color: 'var(--text-dim)', fontWeight: 600, whiteSpace: 'nowrap' }}>{k}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {resultRows.map((row, i) => (
+                              <tr key={i} style={{ borderBottom: '1px solid var(--border)' }} onMouseEnter={e => (e.currentTarget.style.background = 'var(--hover)')} onMouseLeave={e => (e.currentTarget.style.background = '')}>
+                                {colKeys.map(k => (
+                                  <td key={k} style={{ padding: '8px 12px', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {row[k] === null || row[k] === undefined ? <span style={{ color: 'var(--text-dim)' }}>—</span> : typeof row[k] === 'boolean' ? (row[k] ? '✓' : '✗') : String(row[k])}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <pre style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, fontSize: 12, overflowX: 'auto', color: 'var(--text)', fontFamily: 'DM Mono, monospace', maxHeight: 400, overflowY: 'auto' }}>
+                        {JSON.stringify(gqResult, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })() : (
             isViewLoading ? (
               <div>
                 <div className="skeleton" />
