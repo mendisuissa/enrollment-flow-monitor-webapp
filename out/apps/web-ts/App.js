@@ -391,6 +391,24 @@ function getFixSteps(row, ERROR_CATALOG) {
     if (category && categoryMap[category]) {
         return { matched: true, ...categoryMap[category] };
     }
+    // Also try with original casing (Intune may send mixed case)
+    const categoryOriginal = row.failureCategory ?? '';
+    if (categoryOriginal && categoryMap[categoryOriginal]) {
+        return { matched: true, ...categoryMap[categoryOriginal] };
+    }
+    // Normalize camelCase to lowercase for lookup
+    const camelToLower = {
+        'devicelimit': 'deviceLimit',
+        'devicenotsupported': 'deviceNotSupported',
+        'notlicensed': 'notLicensed',
+        'userabandonment': 'userAbandonment',
+        'accountvalidation': 'accountValidation',
+        'aadtokenerror': 'aadTokenError',
+    };
+    const mappedKey = camelToLower[category];
+    if (mappedKey && categoryMap[mappedKey]) {
+        return { matched: true, ...categoryMap[mappedKey] };
+    }
     // Match by failureReason text against ERROR_CATALOG
     const match = ERROR_CATALOG.find(e => {
         const t = e.title.toLowerCase();
