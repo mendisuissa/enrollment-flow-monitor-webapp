@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { IncidentWorkflowRecord, IncidentWorkflowStatus, ViewName } from '@efm/shared';
-type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home' | 'adminDashboard' | 'graphQuery' | 'enrollmentFailures';
+type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home' | 'adminDashboard' | 'graphQuery' | 'enrollmentFailures' | 'enrollmentPolicy';
 import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction, getExportUrl, getIncidentWorkflows, saveIncidentWorkflow } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
@@ -60,6 +60,7 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'ocr', label: 'OCR', icon: '🧠' },
   { id: 'incidents', label: 'Fix Queue', icon: '🚨' },
   { id: 'enrollmentFailures', label: 'Enrollment Failures', icon: '⛔' },
+  { id: 'enrollmentPolicy', label: 'Enrollment Policy', icon: '🛡️' },
   { id: 'permissionCheck', label: 'Access Validation', icon: '🔑' },
   { id: 'enrollmentErrorCatalog', label: 'Failure Catalog', icon: '📚' },
   { id: 'reports', label: 'Executive Reports', icon: '📈' },
@@ -889,6 +890,223 @@ function GraphExplorerView({ gqUrl, setGqUrl, gqResult, setGqResult, gqLoading, 
   );
 }
 
+// ── EnrollmentPolicyView ──────────────────────────────────────────────────────
+function EnrollmentPolicyView({ epData, epLoading, epError, api, setEpData, setEpLoading, setEpError, addToast, runbookText, setRunbookText, runbookLoading, setRunbookLoading }: any) {
+  const refresh = () => {
+    setEpLoading(true); setEpError('');
+    api.get('/graph/enrollment-policy').then((res: any) => {
+      setEpData(res.data);
+      addToast('success', 'Policy refreshed');
+    }).catch((err: any) => {
+      setEpError(err?.response?.data?.message ?? err?.message ?? 'Refresh failed.');
+    }).finally(() => setEpLoading(false));
+  };
+
+  const generateRunbook = async () => {
+    if (!epData) return;
+    setRunbookLoading(true); setRunbookText('');
+    const apStats = epData.autopilot ? `${epData.autopilot.total} devices registered. States: ${JSON.stringify(epData.autopilot.enrollmentStates)}` : 'Not configured';
+    const platStr = epData.platformRestrictions ? Object.entries({
+      iOS: epData.platformRestrictions.iosRestriction,
+      Windows: epData.platformRestrictions.windowsRestriction,
+      Android: epData.platformRestrictions.androidRestriction,
+      macOS: epData.platformRestrictions.macOSRestriction,
+    }).map(([k,v]: any) => `${k}: ${v?.platformBlocked ? 'BLOCKED' : 'Allowed'}${v?.personalDeviceEnrollmentBlocked ? ' (no personal)' : ''}`).join(', ') : 'Default';
+
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [{ role: 'user', content: `You are a Microsoft Intune expert. Generate a concise IT admin runbook based on this enrollment policy snapshot.
+
+MDM Authority: ${epData.mdmAuthority ?? 'Intune'}
+Device Limit: ${epData.deviceLimit ?? 'Unknown'} devices per user (Policy: ${epData.deviceLimitPolicyName ?? 'Default'})
+Platform Restrictions: ${platStr}
+Autopilot: ${apStats}
+Custom Restriction Policies: ${epData.customRestrictions?.length ?? 0}
+
+Format:
+## Current Policy Summary
+## Identified Risks or Gaps
+## Recommended Actions for IT Admin
+## Helpdesk Quick Reference
+
+Be specific and actionable. Max 450 words.` }],
+        }),
+      });
+      const data = await res.json();
+      setRunbookText(data?.content?.[0]?.text ?? 'No response.');
+    } catch (err: any) {
+      setRunbookText('Failed: ' + (err?.message ?? 'Unknown error'));
+    } finally {
+      setRunbookLoading(false);
+    }
+  };
+
+  const stateColor = (state: string) => {
+    if (state === 'enrolled') return { bg: 'rgba(16,185,129,.12)', color: 'var(--green)' };
+    if (state === 'notContacted') return { bg: 'rgba(245,158,11,.12)', color: 'var(--amber)' };
+    return { bg: 'rgba(239,68,68,.12)', color: 'var(--red)' };
+  };
+
+  const PlatRow = ({ label, r }: { label: string; r: any }) => {
+    if (!r) return null;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ width: 110, fontSize: 12, fontWeight: 600, color: 'var(--text)', flexShrink: 0 }}>{label}</div>
+        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700, flexShrink: 0, background: r.platformBlocked ? 'rgba(239,68,68,.12)' : 'rgba(16,185,129,.12)', color: r.platformBlocked ? 'var(--red)' : 'var(--green)' }}>
+          {r.platformBlocked ? '⛔ Blocked' : '✅ Allowed'}
+        </span>
+        {!r.platformBlocked && r.personalDeviceEnrollmentBlocked && <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 700, background: 'rgba(245,158,11,.12)', color: 'var(--amber)' }}>⚠ No Personal</span>}
+        {(r.osMinimumVersion || r.osMaximumVersion) && <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'monospace' }}>OS {r.osMinimumVersion || '—'} → {r.osMaximumVersion || '∞'}</span>}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      <div className="error-catalog-shell" style={{ flex: 1, minWidth: 0 }}>
+        {/* Header */}
+        <div className="error-catalog-header">
+          <div>
+            <div className="error-catalog-title">🛡️ Enrollment Policy</div>
+            <div className="error-catalog-subtitle">Live enrollment configuration from your Intune tenant</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={refresh}>↺ Refresh</button>
+            <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={!epData || runbookLoading} onClick={generateRunbook}>
+              {runbookLoading ? '⏳ Generating…' : '🤖 AI Runbook'}
+            </button>
+          </div>
+        </div>
+
+        {epLoading ? (
+          <div><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
+        ) : epError ? (
+          <div className="empty-state"><div className="empty-state-title" style={{ color: 'var(--red)' }}>⚠ {epError}</div></div>
+        ) : !epData ? (
+          <div className="empty-state"><div className="empty-state-title">Select Enrollment Policy to load data</div></div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* KPI row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+              {[
+                { label: 'MDM Authority', value: epData.mdmAuthority ?? 'Intune', color: 'var(--green)', sub: 'Mobile Device Management' },
+                { label: 'Device Limit', value: `${epData.deviceLimit ?? '—'} devices`, color: (epData.deviceLimit ?? 0) >= 5 ? 'var(--green)' : 'var(--amber)', sub: epData.deviceLimitPolicyName ?? 'Per user' },
+                { label: 'Autopilot Devices', value: epData.autopilot?.total ?? 0, color: (epData.autopilot?.total ?? 0) > 0 ? 'var(--teal)' : 'var(--text-dim)', sub: 'Registered in tenant' },
+                { label: 'Custom Policies', value: epData.customRestrictions?.length ?? 0, color: 'var(--text)', sub: 'Restriction overrides' },
+              ].map(c => (
+                <div key={c.label} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 5 }}>{c.label}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: c.color }}>{String(c.value)}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>{c.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Platform Restrictions */}
+            {epData.platformRestrictions && (
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Platform Restrictions</div>
+                  <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>Policy: {epData.platformRestrictions.policyName} · Modified {new Date(epData.platformRestrictions.lastModified).toLocaleDateString()}</span>
+                </div>
+                <PlatRow label="Windows" r={epData.platformRestrictions.windowsRestriction} />
+                <PlatRow label="iOS / iPadOS" r={epData.platformRestrictions.iosRestriction} />
+                <PlatRow label="Android" r={epData.platformRestrictions.androidRestriction} />
+                <PlatRow label="macOS" r={epData.platformRestrictions.macOSRestriction} />
+                <PlatRow label="Windows Mobile" r={epData.platformRestrictions.windowsMobileRestriction} />
+              </div>
+            )}
+
+            {/* Custom restriction policies */}
+            {epData.customRestrictions?.length > 0 && (
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }}>Custom Restriction Policies ({epData.customRestrictions.length})</div>
+                {epData.customRestrictions.map((r: any, i: number) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                    <span style={{ color: 'var(--text)', fontWeight: 600 }}>{r.displayName}</span>
+                    <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Priority {r.priority} · {new Date(r.lastModifiedDateTime).toLocaleDateString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Autopilot */}
+            {epData.autopilot && (
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Windows Autopilot — {epData.autopilot.total} devices</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {Object.entries(epData.autopilot.enrollmentStates).map(([state, count]: any) => {
+                      const col = stateColor(state);
+                      return <span key={state} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 4, fontWeight: 700, background: col.bg, color: col.color }}>{state}: {count}</span>;
+                    })}
+                  </div>
+                </div>
+                {epData.autopilot.devices.length > 0 && (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                          {['Serial Number', 'Manufacturer', 'Model', 'Group Tag', 'State', 'Last Contact'].map(h => (
+                            <th key={h} style={{ padding: '6px 8px', textAlign: 'left', color: 'var(--text-dim)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', whiteSpace: 'nowrap' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {epData.autopilot.devices.map((d: any, i: number) => {
+                          const col = stateColor(d.enrollmentState);
+                          return (
+                            <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}
+                              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--navy-light, #1E2D42)'; }}
+                              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ''; }}>
+                              <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 10 }}>{d.serialNumber || '—'}</td>
+                              <td style={{ padding: '6px 8px', color: 'var(--text-dim)' }}>{d.manufacturer || '—'}</td>
+                              <td style={{ padding: '6px 8px' }}>{d.model || '—'}</td>
+                              <td style={{ padding: '6px 8px', color: 'var(--text-dim)' }}>{d.groupTag || '—'}</td>
+                              <td style={{ padding: '6px 8px' }}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, fontWeight: 700, background: col.bg, color: col.color }}>{d.enrollmentState}</span></td>
+                              <td style={{ padding: '6px 8px', color: 'var(--text-dim)', fontSize: 10 }}>{d.lastContactedDateTime && d.lastContactedDateTime !== '0001-01-01T00:00:00Z' ? new Date(d.lastContactedDateTime).toLocaleDateString() : 'Never'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* AI Runbook panel */}
+      {(runbookText || runbookLoading) && (
+        <div style={{ width: 360, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 12, position: 'sticky', top: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>🤖 AI Runbook</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {runbookText && (
+                <button className="btn btn-secondary" style={{ fontSize: 11 }} onClick={() => { navigator.clipboard.writeText(runbookText); addToast('success', 'Copied!'); }}>📋 Copy</button>
+              )}
+              <button onClick={() => { setRunbookText(''); setRunbookLoading(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
+            </div>
+          </div>
+          {runbookLoading ? (
+            <div><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
+          ) : (
+            <pre style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 520, overflowY: 'auto', margin: 0 }}>{runbookText}</pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -935,6 +1153,16 @@ export default function App() {
   const [efOsFilter, setEfOsFilter] = useState('all');
   const [selectedEfRow, setSelectedEfRow] = useState<any>(null);
   const [efRetrying, setEfRetrying] = useState(false);
+
+  // ── Enrollment Policy state ──────────────────────────────
+  const [epData, setEpData] = useState<any>(null);
+  const [epLoading, setEpLoading] = useState(false);
+  const [epError, setEpError] = useState('');
+
+  // ── AI Runbook state ─────────────────────────────────────
+  const [runbookRow, setRunbookRow] = useState<any>(null);
+  const [runbookText, setRunbookText] = useState('');
+  const [runbookLoading, setRunbookLoading] = useState(false);
 
   // ✅ FIX: badge counts state for sidebar
   const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({});
@@ -1043,6 +1271,25 @@ export default function App() {
 
     if (view === 'enrollmentFailures' || view === 'graphQuery') {
       // These views handle their own data loading independently
+      return;
+    }
+    if (view === 'enrollmentPolicy') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Loading enrollment policy...');
+      setEpLoading(true);
+      setEpError('');
+      Promise.all([
+        api.get('/graph/enrollment-policy').catch((e: any) => ({ data: { error: e?.response?.data?.message ?? e?.message } })),
+      ]).then(([policyRes]: any[]) => {
+        if (policyRes.data?.error) {
+          setEpError(policyRes.data.error);
+          setStatusMessage('Enrollment Policy load failed.');
+        } else {
+          setEpData(policyRes.data);
+          setStatusMessage('Enrollment Policy loaded.');
+        }
+      }).finally(() => setEpLoading(false));
       return;
     }
 
@@ -2676,7 +2923,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="panel" style={(currentView === 'graphQuery' || currentView === 'enrollmentFailures') ? { gridColumn: '2 / 4' } : {}}>
+        <div className="panel" style={(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy') ? { gridColumn: '2 / 4' } : {}}>
           {currentView === 'adminDashboard' ? (
             <AdminDashboard />
           ) : currentView === 'privacy' ? (
@@ -3372,6 +3619,14 @@ export default function App() {
               setEfRows={setEfRows} setEfLoading={setEfLoading} setEfError={setEfError}
               ERROR_CATALOG={ERROR_CATALOG}
             />
+          ) : currentView === 'enrollmentPolicy' ? (
+            <EnrollmentPolicyView
+              epData={epData} epLoading={epLoading} epError={epError}
+              api={api} setEpData={setEpData} setEpLoading={setEpLoading} setEpError={setEpError}
+              addToast={addToast}
+              runbookText={runbookText} setRunbookText={setRunbookText}
+              runbookLoading={runbookLoading} setRunbookLoading={setRunbookLoading}
+            />
           ) : currentView === 'graphQuery' ? (
             <GraphExplorerView
               gqUrl={gqUrl} setGqUrl={setGqUrl}
@@ -3664,7 +3919,7 @@ export default function App() {
           )}
         </div>
 
-        <div className={`panel detail-rail ${currentView === 'dashboard' ? 'dashboard-rail' : ''} ${!detailsText ? 'is-empty' : ''} ${(currentView === 'graphQuery' || currentView === 'enrollmentFailures') ? 'is-hidden' : ''}`} style={(currentView === 'graphQuery' || currentView === 'enrollmentFailures') ? { display: 'none' } : {}}>
+        <div className={`panel detail-rail ${currentView === 'dashboard' ? 'dashboard-rail' : ''} ${!detailsText ? 'is-empty' : ''} ${(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy') ? 'is-hidden' : ''}`} style={(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy') ? { display: 'none' } : {}}>
           <div className="font-semibold text-xl mb-2">Summary</div>
           <div className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
             {currentView === 'ocr' ? 'OCR Assistant Answer' : detailsSummary}

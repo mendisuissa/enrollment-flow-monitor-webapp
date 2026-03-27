@@ -991,3 +991,82 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
   }
 });
 
+// ── Enrollment Policy — restrictions + MDM + Autopilot ───────────────────────
+apiRouter.get('/graph/enrollment-policy', async (req, res) => {
+  try {
+    const token = req.session?.accessToken;
+    if (!token) return res.status(401).json({ message: 'Not authenticated.' });
+
+    const G = 'https://graph.microsoft.com';
+    const hdr = { Authorization: 'Bearer ' + token, Accept: 'application/json' };
+
+    const [configsRes, mgmtRes, autopilotRes] = await Promise.all([
+      fetch(G + '/v1.0/deviceManagement/deviceEnrollmentConfigurations', { headers: hdr }),
+      fetch(G + '/v1.0/deviceManagement', { headers: hdr }),
+      fetch(G + '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$top=200&$select=id,serialNumber,manufacturer,model,groupTag,enrollmentState,lastContactedDateTime,managedDeviceId,userPrincipalName', { headers: hdr }),
+    ]);
+
+    // Parse enrollment configurations
+    const configsData: any = configsRes.ok ? await configsRes.json() : { value: [] };
+    const configs: any[] = configsData.value ?? [];
+
+    const limitConfig = configs.find((c: any) => c['@odata.type'] === '#microsoft.graph.deviceEnrollmentLimitConfiguration');
+    const platformConfig = configs.find((c: any) => c['@odata.type'] === '#microsoft.graph.deviceEnrollmentPlatformRestrictionsConfiguration');
+    const customRestrictions = configs.filter((c: any) =>
+      c['@odata.type'] === '#microsoft.graph.deviceEnrollmentPlatformRestrictionsConfiguration' && c.priority > 0
+    );
+
+    // Parse MDM info
+    const mgmtData: any = mgmtRes.ok ? await mgmtRes.json() : {};
+
+    // Parse Autopilot devices
+    const autopilotData: any = autopilotRes.ok ? await autopilotRes.json() : { value: [], '@odata.count': 0 };
+    const autopilotDevices: any[] = autopilotData.value ?? [];
+    const autopilotTotal: number = autopilotData['@odata.count'] ?? autopilotDevices.length;
+
+    const enrollmentStates: Record<string, number> = {};
+    autopilotDevices.forEach((d: any) => {
+      const state = d.enrollmentState ?? 'unknown';
+      enrollmentStates[state] = (enrollmentStates[state] ?? 0) + 1;
+    });
+
+    return res.json({
+      mdmAuthority: 'Intune',
+      intuneAccountId: mgmtData.intuneAccountId ?? null,
+      deviceLimit: limitConfig?.limit ?? null,
+      deviceLimitPolicyName: limitConfig?.displayName ?? 'Default',
+      platformRestrictions: platformConfig ? {
+        iosRestriction: platformConfig.iosRestriction,
+        windowsRestriction: platformConfig.windowsRestriction,
+        windowsMobileRestriction: platformConfig.windowsMobileRestriction,
+        androidRestriction: platformConfig.androidRestriction,
+        macOSRestriction: platformConfig.macOSRestriction,
+        policyName: platformConfig.displayName,
+        lastModified: platformConfig.lastModifiedDateTime,
+      } : null,
+      customRestrictions: customRestrictions.map((c: any) => ({
+        displayName: c.displayName,
+        priority: c.priority,
+        lastModifiedDateTime: c.lastModifiedDateTime,
+      })),
+      autopilot: {
+        total: autopilotTotal,
+        enrollmentStates,
+        devices: autopilotDevices.slice(0, 50).map((d: any) => ({
+          id: d.id,
+          serialNumber: d.serialNumber,
+          manufacturer: d.manufacturer,
+          model: d.model,
+          groupTag: d.groupTag,
+          enrollmentState: d.enrollmentState,
+          lastContactedDateTime: d.lastContactedDateTime,
+          managedDeviceId: d.managedDeviceId,
+          userPrincipalName: d.userPrincipalName,
+        })),
+      },
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Enrollment policy fetch failed.';
+    return res.status(500).json({ message: msg });
+  }
+});
