@@ -902,48 +902,106 @@ function EnrollmentPolicyView({ epData, epLoading, epError, api, setEpData, setE
     }).finally(() => setEpLoading(false));
   };
 
-  const generateRunbook = async () => {
+  const generateRunbook = () => {
     if (!epData) return;
-    setRunbookLoading(true); setRunbookText('');
-    const apStats = epData.autopilot ? `${epData.autopilot.total} devices registered. States: ${JSON.stringify(epData.autopilot.enrollmentStates)}` : 'Not configured';
-    const platStr = epData.platformRestrictions ? Object.entries({
-      iOS: epData.platformRestrictions.iosRestriction,
-      Windows: epData.platformRestrictions.windowsRestriction,
-      Android: epData.platformRestrictions.androidRestriction,
-      macOS: epData.platformRestrictions.macOSRestriction,
-    }).map(([k,v]: any) => `${k}: ${v?.platformBlocked ? 'BLOCKED' : 'Allowed'}${v?.personalDeviceEnrollmentBlocked ? ' (no personal)' : ''}`).join(', ') : 'Default';
+    setRunbookLoading(true);
 
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          messages: [{ role: 'user', content: `You are a Microsoft Intune expert. Generate a concise IT admin runbook based on this enrollment policy snapshot.
+    // ── Smart Runbook — pure logic, no API needed ────────────────
+    const sections: string[] = [];
+    const risks: string[] = [];
+    const actions: string[] = [];
+    const helpdesk: string[] = [];
 
-MDM Authority: ${epData.mdmAuthority ?? 'Intune'}
-Device Limit: ${epData.deviceLimit ?? 'Unknown'} devices per user (Policy: ${epData.deviceLimitPolicyName ?? 'Default'})
-Platform Restrictions: ${platStr}
-Autopilot: ${apStats}
-Custom Restriction Policies: ${epData.customRestrictions?.length ?? 0}
+    const p = epData.platformRestrictions;
+    const limit = epData.deviceLimit ?? 5;
+    const ap = epData.autopilot;
 
-Format:
-## Current Policy Summary
-## Identified Risks or Gaps
-## Recommended Actions for IT Admin
-## Helpdesk Quick Reference
+    // ── Current Policy Summary ───────────────────────────────────
+    sections.push('## Current Policy Summary');
+    sections.push('MDM Authority: ' + (epData.mdmAuthority ?? 'Intune'));
+    sections.push('Default Device Limit: ' + limit + ' devices per user (' + (epData.deviceLimitPolicyName ?? 'Default') + ')');
 
-Be specific and actionable. Max 450 words.` }],
-        }),
-      });
-      const data = await res.json();
-      setRunbookText(data?.content?.[0]?.text ?? 'No response.');
-    } catch (err: any) {
-      setRunbookText('Failed: ' + (err?.message ?? 'Unknown error'));
-    } finally {
-      setRunbookLoading(false);
+    if (p) {
+      const platLines = [
+        'Windows: ' + (p.windowsRestriction?.platformBlocked ? 'BLOCKED' : ('Allowed' + (p.windowsRestriction?.personalDeviceEnrollmentBlocked ? ' — Corporate only' : ' — Personal + Corporate'))),
+        'iOS/iPadOS: ' + (p.iosRestriction?.platformBlocked ? 'BLOCKED' : ('Allowed' + (p.iosRestriction?.personalDeviceEnrollmentBlocked ? ' — Corporate only' : ' — Personal + Corporate'))),
+        'Android: ' + (p.androidRestriction?.platformBlocked ? 'BLOCKED' : ('Allowed' + (p.androidRestriction?.personalDeviceEnrollmentBlocked ? ' — Corporate only' : ' — Personal + Corporate'))),
+        'macOS: ' + (p.macOSRestriction?.platformBlocked ? 'BLOCKED' : ('Allowed' + (p.macOSRestriction?.personalDeviceEnrollmentBlocked ? ' — Corporate only' : ' — Personal + Corporate'))),
+        'Windows Mobile: ' + (p.windowsMobileRestriction?.platformBlocked ? 'BLOCKED' : 'Allowed'),
+      ];
+      sections.push('\nPlatform Restrictions (Policy: ' + p.policyName + '):');
+      platLines.forEach(l => sections.push('  • ' + l));
     }
+
+    if ((epData.customLimitPolicies ?? []).length > 0) {
+      sections.push('\nCustom Device Limit Overrides:');
+      epData.customLimitPolicies.forEach((c: any) => sections.push('  • ' + c.displayName + ': ' + c.limit + ' devices (Priority ' + c.priority + ')'));
+    }
+
+    if (ap) {
+      sections.push('\nWindows Autopilot: ' + ap.total + ' device' + (ap.total !== 1 ? 's' : '') + ' registered');
+      Object.entries(ap.enrollmentStates).forEach(([state, count]: any) => {
+        sections.push('  • ' + state + ': ' + count);
+      });
+    }
+
+    // ── Identified Risks or Gaps ─────────────────────────────────
+    if (limit <= 3) risks.push('Device limit of ' + limit + ' is very low — users with multiple devices will be blocked from enrollment.');
+    if (limit === 5) risks.push('Default device limit of 5 may be insufficient for power users or executives who use multiple devices.');
+
+    if (p?.androidRestriction?.platformBlocked) risks.push('Android enrollment is fully blocked — BYOD Android users cannot enroll. Verify this is intentional policy.');
+    if (p?.windowsMobileRestriction?.platformBlocked) risks.push('Windows Mobile is blocked — this is expected for most tenants (platform is deprecated).');
+    if (p?.iosRestriction?.personalDeviceEnrollmentBlocked) risks.push('Personal iOS devices are blocked — only corporate-owned iOS devices can enroll.');
+    if (p?.androidRestriction && !p.androidRestriction.platformBlocked && p.androidRestriction.personalDeviceEnrollmentBlocked) risks.push('Personal Android devices are blocked — BYOD Android policy may frustrate users.');
+
+    if (ap && ap.total > 0) {
+      const notContacted = ap.enrollmentStates['notContacted'] ?? 0;
+      if (notContacted > 0) risks.push(notContacted + ' Autopilot device' + (notContacted !== 1 ? 's' : '') + ' have status "notContacted" — these devices have never reached Intune. Verify network connectivity and Autopilot profile assignment.');
+      const failed = ap.enrollmentStates['failed'] ?? 0;
+      if (failed > 0) risks.push(failed + ' Autopilot device' + (failed !== 1 ? 's' : '') + ' failed enrollment — check Autopilot deployment profile and hardware hash validity.');
+    }
+    if (ap && ap.total === 0) risks.push('No Autopilot devices registered — Windows Autopilot is not configured. Devices must be enrolled manually.');
+
+    if ((epData.customPlatformPolicies ?? []).length > 0) risks.push((epData.customPlatformPolicies.length) + ' custom platform restriction polic' + (epData.customPlatformPolicies.length > 1 ? 'ies' : 'y') + ' detected — ensure they are intentional and do not conflict with default policy.');
+
+    if (risks.length === 0) risks.push('No critical risks identified. Policy appears well-configured.');
+
+    // ── Recommended Actions ──────────────────────────────────────
+    if (limit <= 5) actions.push('Consider raising the default device limit to 10 for standard users, and creating a custom limit policy for specific groups if needed.');
+    if (p?.androidRestriction?.platformBlocked) actions.push('If Android BYOD is required, unblock Android in Enrollment Restrictions and configure Android Enterprise (Work Profile) for personal devices.');
+    if (ap && ap.total > 0 && (ap.enrollmentStates['notContacted'] ?? 0) > 0) {
+      actions.push('For Autopilot "notContacted" devices: 1) Verify the device has internet access, 2) Check that the Autopilot profile is assigned to the device/group, 3) Run Get-AutopilotDiagnostics to inspect status.');
+    }
+    if (!ap || ap.total === 0) actions.push('To enable Autopilot: upload device hardware hashes via Intune (Devices > Windows > Windows Enrollment > Devices), assign an Autopilot deployment profile, and test with a pilot device.');
+    actions.push('Review Enrollment Restrictions quarterly to ensure they align with current device policy.');
+    actions.push('Enable Enrollment Notifications (Devices > Enrollment Notifications) to alert users upon successful enrollment.');
+
+    // ── Helpdesk Quick Reference ─────────────────────────────────
+    helpdesk.push('User cannot enroll Android → Check if Android is blocked in Enrollment Restrictions. If blocked, escalate to IT admin.');
+    helpdesk.push('User hit device limit → Go to Entra ID > Users > [user] and remove a stale device, or raise the limit in Enrollment Restrictions.');
+    helpdesk.push('Autopilot device stuck at enrollment → Verify device is in Autopilot list (Intune > Devices > Windows > Enrollment > Devices). Run Autopilot Diagnostics.');
+    helpdesk.push('Enrollment fails immediately → Check if the user has an Intune license assigned in Entra ID > Users > Licenses.');
+
+    const runbook = [
+      '# Intune Enrollment Policy Runbook',
+      '**Generated by Enrollment Flow Monitor · ' + new Date().toLocaleDateString() + '**',
+      '',
+      sections.join('\n'),
+      '',
+      '## Identified Risks or Gaps',
+      ...risks.map(r => '• ' + r),
+      '',
+      '## Recommended Actions for IT Admin',
+      ...actions.map((a, i) => (i+1) + '. ' + a),
+      '',
+      '## Helpdesk Quick Reference',
+      ...helpdesk.map(h => '• ' + h),
+    ].join('\n');
+
+    setTimeout(() => {
+      setRunbookText(runbook);
+      setRunbookLoading(false);
+    }, 300); // small delay for UX
   };
 
   const stateColor = (state: string) => {
@@ -954,14 +1012,32 @@ Be specific and actionable. Max 450 words.` }],
 
   const PlatRow = ({ label, r }: { label: string; r: any }) => {
     if (!r) return null;
+    const blocked = r.platformBlocked;
+    const personalBlocked = r.personalDeviceEnrollmentBlocked;
+    const hasOsRange = r.osMinimumVersion || r.osMaximumVersion;
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ width: 110, fontSize: 12, fontWeight: 600, color: 'var(--text)', flexShrink: 0 }}>{label}</div>
-        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700, flexShrink: 0, background: r.platformBlocked ? 'rgba(239,68,68,.12)' : 'rgba(16,185,129,.12)', color: r.platformBlocked ? 'var(--red)' : 'var(--green)' }}>
-          {r.platformBlocked ? '⛔ Blocked' : '✅ Allowed'}
+      <div style={{ display: 'grid', gridTemplateColumns: '120px 120px 160px 1fr', alignItems: 'center', gap: 8, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{label}</div>
+        {/* Platform status */}
+        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700, textAlign: 'center', background: blocked ? 'rgba(239,68,68,.12)' : 'rgba(16,185,129,.12)', color: blocked ? 'var(--red)' : 'var(--green)' }}>
+          {blocked ? '⛔ Blocked' : '✅ Allowed'}
         </span>
-        {!r.platformBlocked && r.personalDeviceEnrollmentBlocked && <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 700, background: 'rgba(245,158,11,.12)', color: 'var(--amber)' }}>⚠ No Personal</span>}
-        {(r.osMinimumVersion || r.osMaximumVersion) && <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'monospace' }}>OS {r.osMinimumVersion || '—'} → {r.osMaximumVersion || '∞'}</span>}
+        {/* Personal device status */}
+        {!blocked ? (
+          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700, textAlign: 'center', background: personalBlocked ? 'rgba(245,158,11,.12)' : 'rgba(16,185,129,.12)', color: personalBlocked ? 'var(--amber)' : 'var(--green)' }}>
+            {personalBlocked ? '⚠ Corporate Only' : '✅ Personal Allowed'}
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }}>— no enrollment</span>
+        )}
+        {/* OS version range */}
+        {hasOsRange ? (
+          <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+            OS {r.osMinimumVersion || 'any'} → {r.osMaximumVersion || 'any'}
+          </span>
+        ) : (
+          <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>All OS versions</span>
+        )}
       </div>
     );
   };
@@ -978,7 +1054,7 @@ Be specific and actionable. Max 450 words.` }],
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={refresh}>↺ Refresh</button>
             <button className="btn btn-primary" style={{ fontSize: 12 }} disabled={!epData || runbookLoading} onClick={generateRunbook}>
-              {runbookLoading ? '⏳ Generating…' : '🤖 AI Runbook'}
+              {runbookLoading ? '⏳ Building…' : '📋 Generate Runbook'}
             </button>
           </div>
         </div>
@@ -998,7 +1074,7 @@ Be specific and actionable. Max 450 words.` }],
                 { label: 'MDM Authority', value: epData.mdmAuthority ?? 'Intune', color: 'var(--green)', sub: 'Mobile Device Management' },
                 { label: 'Device Limit', value: `${epData.deviceLimit ?? '—'} devices`, color: (epData.deviceLimit ?? 0) >= 5 ? 'var(--green)' : 'var(--amber)', sub: epData.deviceLimitPolicyName ?? 'Per user' },
                 { label: 'Autopilot Devices', value: epData.autopilot?.total ?? 0, color: (epData.autopilot?.total ?? 0) > 0 ? 'var(--teal)' : 'var(--text-dim)', sub: 'Registered in tenant' },
-                { label: 'Custom Policies', value: epData.customRestrictions?.length ?? 0, color: 'var(--text)', sub: 'Restriction overrides' },
+                { label: 'Custom Policies', value: (epData.customLimitPolicies?.length ?? 0) + (epData.customPlatformPolicies?.length ?? 0), color: 'var(--text)', sub: 'Limit + platform overrides' },
               ].map(c => (
                 <div key={c.label} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
                   <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 5 }}>{c.label}</div>
@@ -1015,6 +1091,12 @@ Be specific and actionable. Max 450 words.` }],
                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Platform Restrictions</div>
                   <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>Policy: {epData.platformRestrictions.policyName} · Modified {new Date(epData.platformRestrictions.lastModified).toLocaleDateString()}</span>
                 </div>
+                {/* Column headers */}
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 120px 160px 1fr', gap: 8, padding: '4px 0 8px', borderBottom: '2px solid var(--border)', marginBottom: 4 }}>
+                  {['Platform', 'Status', 'Personal Devices', 'OS Version Range'].map(h => (
+                    <div key={h} style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.06em' }}>{h}</div>
+                  ))}
+                </div>
                 <PlatRow label="Windows" r={epData.platformRestrictions.windowsRestriction} />
                 <PlatRow label="iOS / iPadOS" r={epData.platformRestrictions.iosRestriction} />
                 <PlatRow label="Android" r={epData.platformRestrictions.androidRestriction} />
@@ -1023,14 +1105,55 @@ Be specific and actionable. Max 450 words.` }],
               </div>
             )}
 
-            {/* Custom restriction policies */}
-            {epData.customRestrictions?.length > 0 && (
+            {/* Custom Device Limit Policies */}
+            {(epData.customLimitPolicies?.length ?? 0) > 0 && (
               <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }}>Custom Restriction Policies ({epData.customRestrictions.length})</div>
-                {epData.customRestrictions.map((r: any, i: number) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }}>
+                  Custom Device Limit Policies ({epData.customLimitPolicies.length})
+                  <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-dim)', marginLeft: 8 }}>— per-group overrides</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 120px', gap: 8, padding: '4px 0 8px', borderBottom: '2px solid var(--border)', marginBottom: 4 }}>
+                  {['Policy Name', 'Limit', 'Priority', 'Last Modified'].map(h => (
+                    <div key={h} style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.06em' }}>{h}</div>
+                  ))}
+                </div>
+                {epData.customLimitPolicies.map((r: any, i: number) => (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 120px', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 12, alignItems: 'center' }}>
                     <span style={{ color: 'var(--text)', fontWeight: 600 }}>{r.displayName}</span>
-                    <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Priority {r.priority} · {new Date(r.lastModifiedDateTime).toLocaleDateString()}</span>
+                    <span style={{ color: 'var(--amber)', fontWeight: 700, fontFamily: 'monospace' }}>{r.limit} devices</span>
+                    <span style={{ color: 'var(--text-dim)' }}>P{r.priority}</span>
+                    <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{new Date(r.lastModifiedDateTime).toLocaleDateString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Custom Platform Restriction Policies */}
+            {(epData.customPlatformPolicies?.length ?? 0) > 0 && (
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }}>
+                  Custom Platform Policies ({epData.customPlatformPolicies.length})
+                  <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-dim)', marginLeft: 8 }}>— group-specific overrides</span>
+                </div>
+                {epData.customPlatformPolicies.map((policy: any, pi: number) => (
+                  <div key={pi} style={{ marginBottom: pi < epData.customPlatformPolicies.length - 1 ? 12 : 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{policy.displayName}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>Priority {policy.priority} · {new Date(policy.lastModifiedDateTime).toLocaleDateString()}</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '120px 120px 160px 1fr', gap: 8, padding: '4px 0 4px', borderBottom: '1px solid var(--border)', marginBottom: 2 }}>
+                      {['Platform', 'Status', 'Personal Devices', 'OS Range'].map(h => (
+                        <div key={h} style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.06em' }}>{h}</div>
+                      ))}
+                    </div>
+                    {[
+                      { label: 'Windows', r: policy.windowsRestriction },
+                      { label: 'iOS / iPadOS', r: policy.iosRestriction },
+                      { label: 'Android', r: policy.androidRestriction },
+                      { label: 'macOS', r: policy.macOSRestriction },
+                    ].filter(x => x.r).map(({ label, r }) => (
+                      <PlatRow key={label} label={label} r={r} />
+                    ))}
                   </div>
                 ))}
               </div>

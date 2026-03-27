@@ -544,51 +544,106 @@ function EnrollmentPolicyView({ epData, epLoading, epError, api, setEpData, setE
             setEpError(err?.response?.data?.message ?? err?.message ?? 'Refresh failed.');
         }).finally(() => setEpLoading(false));
     };
-    const generateRunbook = async () => {
+    const generateRunbook = () => {
         if (!epData)
             return;
         setRunbookLoading(true);
-        setRunbookText('');
-        const apStats = epData.autopilot ? `${epData.autopilot.total} devices registered. States: ${JSON.stringify(epData.autopilot.enrollmentStates)}` : 'Not configured';
-        const platStr = epData.platformRestrictions ? Object.entries({
-            iOS: epData.platformRestrictions.iosRestriction,
-            Windows: epData.platformRestrictions.windowsRestriction,
-            Android: epData.platformRestrictions.androidRestriction,
-            macOS: epData.platformRestrictions.macOSRestriction,
-        }).map(([k, v]) => `${k}: ${v?.platformBlocked ? 'BLOCKED' : 'Allowed'}${v?.personalDeviceEnrollmentBlocked ? ' (no personal)' : ''}`).join(', ') : 'Default';
-        try {
-            const res = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: 'claude-sonnet-4-20250514',
-                    max_tokens: 1000,
-                    messages: [{ role: 'user', content: `You are a Microsoft Intune expert. Generate a concise IT admin runbook based on this enrollment policy snapshot.
-
-MDM Authority: ${epData.mdmAuthority ?? 'Intune'}
-Device Limit: ${epData.deviceLimit ?? 'Unknown'} devices per user (Policy: ${epData.deviceLimitPolicyName ?? 'Default'})
-Platform Restrictions: ${platStr}
-Autopilot: ${apStats}
-Custom Restriction Policies: ${epData.customRestrictions?.length ?? 0}
-
-Format:
-## Current Policy Summary
-## Identified Risks or Gaps
-## Recommended Actions for IT Admin
-## Helpdesk Quick Reference
-
-Be specific and actionable. Max 450 words.` }],
-                }),
+        // ── Smart Runbook — pure logic, no API needed ────────────────
+        const sections = [];
+        const risks = [];
+        const actions = [];
+        const helpdesk = [];
+        const p = epData.platformRestrictions;
+        const limit = epData.deviceLimit ?? 5;
+        const ap = epData.autopilot;
+        // ── Current Policy Summary ───────────────────────────────────
+        sections.push('## Current Policy Summary');
+        sections.push('MDM Authority: ' + (epData.mdmAuthority ?? 'Intune'));
+        sections.push('Default Device Limit: ' + limit + ' devices per user (' + (epData.deviceLimitPolicyName ?? 'Default') + ')');
+        if (p) {
+            const platLines = [
+                'Windows: ' + (p.windowsRestriction?.platformBlocked ? 'BLOCKED' : ('Allowed' + (p.windowsRestriction?.personalDeviceEnrollmentBlocked ? ' — Corporate only' : ' — Personal + Corporate'))),
+                'iOS/iPadOS: ' + (p.iosRestriction?.platformBlocked ? 'BLOCKED' : ('Allowed' + (p.iosRestriction?.personalDeviceEnrollmentBlocked ? ' — Corporate only' : ' — Personal + Corporate'))),
+                'Android: ' + (p.androidRestriction?.platformBlocked ? 'BLOCKED' : ('Allowed' + (p.androidRestriction?.personalDeviceEnrollmentBlocked ? ' — Corporate only' : ' — Personal + Corporate'))),
+                'macOS: ' + (p.macOSRestriction?.platformBlocked ? 'BLOCKED' : ('Allowed' + (p.macOSRestriction?.personalDeviceEnrollmentBlocked ? ' — Corporate only' : ' — Personal + Corporate'))),
+                'Windows Mobile: ' + (p.windowsMobileRestriction?.platformBlocked ? 'BLOCKED' : 'Allowed'),
+            ];
+            sections.push('\nPlatform Restrictions (Policy: ' + p.policyName + '):');
+            platLines.forEach(l => sections.push('  • ' + l));
+        }
+        if ((epData.customLimitPolicies ?? []).length > 0) {
+            sections.push('\nCustom Device Limit Overrides:');
+            epData.customLimitPolicies.forEach((c) => sections.push('  • ' + c.displayName + ': ' + c.limit + ' devices (Priority ' + c.priority + ')'));
+        }
+        if (ap) {
+            sections.push('\nWindows Autopilot: ' + ap.total + ' device' + (ap.total !== 1 ? 's' : '') + ' registered');
+            Object.entries(ap.enrollmentStates).forEach(([state, count]) => {
+                sections.push('  • ' + state + ': ' + count);
             });
-            const data = await res.json();
-            setRunbookText(data?.content?.[0]?.text ?? 'No response.');
         }
-        catch (err) {
-            setRunbookText('Failed: ' + (err?.message ?? 'Unknown error'));
+        // ── Identified Risks or Gaps ─────────────────────────────────
+        if (limit <= 3)
+            risks.push('Device limit of ' + limit + ' is very low — users with multiple devices will be blocked from enrollment.');
+        if (limit === 5)
+            risks.push('Default device limit of 5 may be insufficient for power users or executives who use multiple devices.');
+        if (p?.androidRestriction?.platformBlocked)
+            risks.push('Android enrollment is fully blocked — BYOD Android users cannot enroll. Verify this is intentional policy.');
+        if (p?.windowsMobileRestriction?.platformBlocked)
+            risks.push('Windows Mobile is blocked — this is expected for most tenants (platform is deprecated).');
+        if (p?.iosRestriction?.personalDeviceEnrollmentBlocked)
+            risks.push('Personal iOS devices are blocked — only corporate-owned iOS devices can enroll.');
+        if (p?.androidRestriction && !p.androidRestriction.platformBlocked && p.androidRestriction.personalDeviceEnrollmentBlocked)
+            risks.push('Personal Android devices are blocked — BYOD Android policy may frustrate users.');
+        if (ap && ap.total > 0) {
+            const notContacted = ap.enrollmentStates['notContacted'] ?? 0;
+            if (notContacted > 0)
+                risks.push(notContacted + ' Autopilot device' + (notContacted !== 1 ? 's' : '') + ' have status "notContacted" — these devices have never reached Intune. Verify network connectivity and Autopilot profile assignment.');
+            const failed = ap.enrollmentStates['failed'] ?? 0;
+            if (failed > 0)
+                risks.push(failed + ' Autopilot device' + (failed !== 1 ? 's' : '') + ' failed enrollment — check Autopilot deployment profile and hardware hash validity.');
         }
-        finally {
+        if (ap && ap.total === 0)
+            risks.push('No Autopilot devices registered — Windows Autopilot is not configured. Devices must be enrolled manually.');
+        if ((epData.customPlatformPolicies ?? []).length > 0)
+            risks.push((epData.customPlatformPolicies.length) + ' custom platform restriction polic' + (epData.customPlatformPolicies.length > 1 ? 'ies' : 'y') + ' detected — ensure they are intentional and do not conflict with default policy.');
+        if (risks.length === 0)
+            risks.push('No critical risks identified. Policy appears well-configured.');
+        // ── Recommended Actions ──────────────────────────────────────
+        if (limit <= 5)
+            actions.push('Consider raising the default device limit to 10 for standard users, and creating a custom limit policy for specific groups if needed.');
+        if (p?.androidRestriction?.platformBlocked)
+            actions.push('If Android BYOD is required, unblock Android in Enrollment Restrictions and configure Android Enterprise (Work Profile) for personal devices.');
+        if (ap && ap.total > 0 && (ap.enrollmentStates['notContacted'] ?? 0) > 0) {
+            actions.push('For Autopilot "notContacted" devices: 1) Verify the device has internet access, 2) Check that the Autopilot profile is assigned to the device/group, 3) Run Get-AutopilotDiagnostics to inspect status.');
+        }
+        if (!ap || ap.total === 0)
+            actions.push('To enable Autopilot: upload device hardware hashes via Intune (Devices > Windows > Windows Enrollment > Devices), assign an Autopilot deployment profile, and test with a pilot device.');
+        actions.push('Review Enrollment Restrictions quarterly to ensure they align with current device policy.');
+        actions.push('Enable Enrollment Notifications (Devices > Enrollment Notifications) to alert users upon successful enrollment.');
+        // ── Helpdesk Quick Reference ─────────────────────────────────
+        helpdesk.push('User cannot enroll Android → Check if Android is blocked in Enrollment Restrictions. If blocked, escalate to IT admin.');
+        helpdesk.push('User hit device limit → Go to Entra ID > Users > [user] and remove a stale device, or raise the limit in Enrollment Restrictions.');
+        helpdesk.push('Autopilot device stuck at enrollment → Verify device is in Autopilot list (Intune > Devices > Windows > Enrollment > Devices). Run Autopilot Diagnostics.');
+        helpdesk.push('Enrollment fails immediately → Check if the user has an Intune license assigned in Entra ID > Users > Licenses.');
+        const runbook = [
+            '# Intune Enrollment Policy Runbook',
+            '**Generated by Enrollment Flow Monitor · ' + new Date().toLocaleDateString() + '**',
+            '',
+            sections.join('\n'),
+            '',
+            '## Identified Risks or Gaps',
+            ...risks.map(r => '• ' + r),
+            '',
+            '## Recommended Actions for IT Admin',
+            ...actions.map((a, i) => (i + 1) + '. ' + a),
+            '',
+            '## Helpdesk Quick Reference',
+            ...helpdesk.map(h => '• ' + h),
+        ].join('\n');
+        setTimeout(() => {
+            setRunbookText(runbook);
             setRunbookLoading(false);
-        }
+        }, 300); // small delay for UX
     };
     const stateColor = (state) => {
         if (state === 'enrolled')
@@ -600,14 +655,22 @@ Be specific and actionable. Max 450 words.` }],
     const PlatRow = ({ label, r }) => {
         if (!r)
             return null;
-        return (_jsxs("div", { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)' }, children: [_jsx("div", { style: { width: 110, fontSize: 12, fontWeight: 600, color: 'var(--text)', flexShrink: 0 }, children: label }), _jsx("span", { style: { fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700, flexShrink: 0, background: r.platformBlocked ? 'rgba(239,68,68,.12)' : 'rgba(16,185,129,.12)', color: r.platformBlocked ? 'var(--red)' : 'var(--green)' }, children: r.platformBlocked ? '⛔ Blocked' : '✅ Allowed' }), !r.platformBlocked && r.personalDeviceEnrollmentBlocked && _jsx("span", { style: { fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 700, background: 'rgba(245,158,11,.12)', color: 'var(--amber)' }, children: "\u26A0 No Personal" }), (r.osMinimumVersion || r.osMaximumVersion) && _jsxs("span", { style: { fontSize: 10, color: 'var(--text-dim)', fontFamily: 'monospace' }, children: ["OS ", r.osMinimumVersion || '—', " \u2192 ", r.osMaximumVersion || '∞'] })] }));
+        const blocked = r.platformBlocked;
+        const personalBlocked = r.personalDeviceEnrollmentBlocked;
+        const hasOsRange = r.osMinimumVersion || r.osMaximumVersion;
+        return (_jsxs("div", { style: { display: 'grid', gridTemplateColumns: '120px 120px 160px 1fr', alignItems: 'center', gap: 8, padding: '9px 0', borderBottom: '1px solid var(--border)' }, children: [_jsx("div", { style: { fontSize: 12, fontWeight: 600, color: 'var(--text)' }, children: label }), _jsx("span", { style: { fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700, textAlign: 'center', background: blocked ? 'rgba(239,68,68,.12)' : 'rgba(16,185,129,.12)', color: blocked ? 'var(--red)' : 'var(--green)' }, children: blocked ? '⛔ Blocked' : '✅ Allowed' }), !blocked ? (_jsx("span", { style: { fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700, textAlign: 'center', background: personalBlocked ? 'rgba(245,158,11,.12)' : 'rgba(16,185,129,.12)', color: personalBlocked ? 'var(--amber)' : 'var(--green)' }, children: personalBlocked ? '⚠ Corporate Only' : '✅ Personal Allowed' })) : (_jsx("span", { style: { fontSize: 11, color: 'var(--text-dim)', fontStyle: 'italic' }, children: "\u2014 no enrollment" })), hasOsRange ? (_jsxs("span", { style: { fontSize: 10, color: 'var(--text-dim)', fontFamily: 'monospace' }, children: ["OS ", r.osMinimumVersion || 'any', " \u2192 ", r.osMaximumVersion || 'any'] })) : (_jsx("span", { style: { fontSize: 10, color: 'var(--text-dim)' }, children: "All OS versions" }))] }));
     };
-    return (_jsxs("div", { style: { display: 'flex', gap: 16, alignItems: 'flex-start' }, children: [_jsxs("div", { className: "error-catalog-shell", style: { flex: 1, minWidth: 0 }, children: [_jsxs("div", { className: "error-catalog-header", children: [_jsxs("div", { children: [_jsx("div", { className: "error-catalog-title", children: "\uD83D\uDEE1\uFE0F Enrollment Policy" }), _jsx("div", { className: "error-catalog-subtitle", children: "Live enrollment configuration from your Intune tenant" })] }), _jsxs("div", { style: { display: 'flex', gap: 8 }, children: [_jsx("button", { className: "btn btn-secondary", style: { fontSize: 12 }, onClick: refresh, children: "\u21BA Refresh" }), _jsx("button", { className: "btn btn-primary", style: { fontSize: 12 }, disabled: !epData || runbookLoading, onClick: generateRunbook, children: runbookLoading ? '⏳ Generating…' : '🤖 AI Runbook' })] })] }), epLoading ? (_jsxs("div", { children: [_jsx("div", { className: "skeleton" }), _jsx("div", { className: "skeleton" }), _jsx("div", { className: "skeleton" }), _jsx("div", { className: "skeleton" })] })) : epError ? (_jsx("div", { className: "empty-state", children: _jsxs("div", { className: "empty-state-title", style: { color: 'var(--red)' }, children: ["\u26A0 ", epError] }) })) : !epData ? (_jsx("div", { className: "empty-state", children: _jsx("div", { className: "empty-state-title", children: "Select Enrollment Policy to load data" }) })) : (_jsxs("div", { style: { display: 'flex', flexDirection: 'column', gap: 16 }, children: [_jsx("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }, children: [
+    return (_jsxs("div", { style: { display: 'flex', gap: 16, alignItems: 'flex-start' }, children: [_jsxs("div", { className: "error-catalog-shell", style: { flex: 1, minWidth: 0 }, children: [_jsxs("div", { className: "error-catalog-header", children: [_jsxs("div", { children: [_jsx("div", { className: "error-catalog-title", children: "\uD83D\uDEE1\uFE0F Enrollment Policy" }), _jsx("div", { className: "error-catalog-subtitle", children: "Live enrollment configuration from your Intune tenant" })] }), _jsxs("div", { style: { display: 'flex', gap: 8 }, children: [_jsx("button", { className: "btn btn-secondary", style: { fontSize: 12 }, onClick: refresh, children: "\u21BA Refresh" }), _jsx("button", { className: "btn btn-primary", style: { fontSize: 12 }, disabled: !epData || runbookLoading, onClick: generateRunbook, children: runbookLoading ? '⏳ Building…' : '📋 Generate Runbook' })] })] }), epLoading ? (_jsxs("div", { children: [_jsx("div", { className: "skeleton" }), _jsx("div", { className: "skeleton" }), _jsx("div", { className: "skeleton" }), _jsx("div", { className: "skeleton" })] })) : epError ? (_jsx("div", { className: "empty-state", children: _jsxs("div", { className: "empty-state-title", style: { color: 'var(--red)' }, children: ["\u26A0 ", epError] }) })) : !epData ? (_jsx("div", { className: "empty-state", children: _jsx("div", { className: "empty-state-title", children: "Select Enrollment Policy to load data" }) })) : (_jsxs("div", { style: { display: 'flex', flexDirection: 'column', gap: 16 }, children: [_jsx("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }, children: [
                                     { label: 'MDM Authority', value: epData.mdmAuthority ?? 'Intune', color: 'var(--green)', sub: 'Mobile Device Management' },
                                     { label: 'Device Limit', value: `${epData.deviceLimit ?? '—'} devices`, color: (epData.deviceLimit ?? 0) >= 5 ? 'var(--green)' : 'var(--amber)', sub: epData.deviceLimitPolicyName ?? 'Per user' },
                                     { label: 'Autopilot Devices', value: epData.autopilot?.total ?? 0, color: (epData.autopilot?.total ?? 0) > 0 ? 'var(--teal)' : 'var(--text-dim)', sub: 'Registered in tenant' },
-                                    { label: 'Custom Policies', value: epData.customRestrictions?.length ?? 0, color: 'var(--text)', sub: 'Restriction overrides' },
-                                ].map(c => (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }, children: [_jsx("div", { style: { fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 5 }, children: c.label }), _jsx("div", { style: { fontSize: 20, fontWeight: 700, color: c.color }, children: String(c.value) }), _jsx("div", { style: { fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }, children: c.sub })] }, c.label))) }), epData.platformRestrictions && (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }, children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }, children: [_jsx("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)' }, children: "Platform Restrictions" }), _jsxs("span", { style: { fontSize: 10, color: 'var(--text-dim)' }, children: ["Policy: ", epData.platformRestrictions.policyName, " \u00B7 Modified ", new Date(epData.platformRestrictions.lastModified).toLocaleDateString()] })] }), _jsx(PlatRow, { label: "Windows", r: epData.platformRestrictions.windowsRestriction }), _jsx(PlatRow, { label: "iOS / iPadOS", r: epData.platformRestrictions.iosRestriction }), _jsx(PlatRow, { label: "Android", r: epData.platformRestrictions.androidRestriction }), _jsx(PlatRow, { label: "macOS", r: epData.platformRestrictions.macOSRestriction }), _jsx(PlatRow, { label: "Windows Mobile", r: epData.platformRestrictions.windowsMobileRestriction })] })), epData.customRestrictions?.length > 0 && (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }, children: [_jsxs("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }, children: ["Custom Restriction Policies (", epData.customRestrictions.length, ")"] }), epData.customRestrictions.map((r, i) => (_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }, children: [_jsx("span", { style: { color: 'var(--text)', fontWeight: 600 }, children: r.displayName }), _jsxs("span", { style: { color: 'var(--text-dim)', fontSize: 11 }, children: ["Priority ", r.priority, " \u00B7 ", new Date(r.lastModifiedDateTime).toLocaleDateString()] })] }, i)))] })), epData.autopilot && (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }, children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }, children: [_jsxs("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)' }, children: ["Windows Autopilot \u2014 ", epData.autopilot.total, " devices"] }), _jsx("div", { style: { display: 'flex', gap: 6 }, children: Object.entries(epData.autopilot.enrollmentStates).map(([state, count]) => {
+                                    { label: 'Custom Policies', value: (epData.customLimitPolicies?.length ?? 0) + (epData.customPlatformPolicies?.length ?? 0), color: 'var(--text)', sub: 'Limit + platform overrides' },
+                                ].map(c => (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }, children: [_jsx("div", { style: { fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 5 }, children: c.label }), _jsx("div", { style: { fontSize: 20, fontWeight: 700, color: c.color }, children: String(c.value) }), _jsx("div", { style: { fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }, children: c.sub })] }, c.label))) }), epData.platformRestrictions && (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }, children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }, children: [_jsx("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)' }, children: "Platform Restrictions" }), _jsxs("span", { style: { fontSize: 10, color: 'var(--text-dim)' }, children: ["Policy: ", epData.platformRestrictions.policyName, " \u00B7 Modified ", new Date(epData.platformRestrictions.lastModified).toLocaleDateString()] })] }), _jsx("div", { style: { display: 'grid', gridTemplateColumns: '120px 120px 160px 1fr', gap: 8, padding: '4px 0 8px', borderBottom: '2px solid var(--border)', marginBottom: 4 }, children: ['Platform', 'Status', 'Personal Devices', 'OS Version Range'].map(h => (_jsx("div", { style: { fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.06em' }, children: h }, h))) }), _jsx(PlatRow, { label: "Windows", r: epData.platformRestrictions.windowsRestriction }), _jsx(PlatRow, { label: "iOS / iPadOS", r: epData.platformRestrictions.iosRestriction }), _jsx(PlatRow, { label: "Android", r: epData.platformRestrictions.androidRestriction }), _jsx(PlatRow, { label: "macOS", r: epData.platformRestrictions.macOSRestriction }), _jsx(PlatRow, { label: "Windows Mobile", r: epData.platformRestrictions.windowsMobileRestriction })] })), (epData.customLimitPolicies?.length ?? 0) > 0 && (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }, children: [_jsxs("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }, children: ["Custom Device Limit Policies (", epData.customLimitPolicies.length, ")", _jsx("span", { style: { fontSize: 11, fontWeight: 400, color: 'var(--text-dim)', marginLeft: 8 }, children: "\u2014 per-group overrides" })] }), _jsx("div", { style: { display: 'grid', gridTemplateColumns: '1fr 80px 80px 120px', gap: 8, padding: '4px 0 8px', borderBottom: '2px solid var(--border)', marginBottom: 4 }, children: ['Policy Name', 'Limit', 'Priority', 'Last Modified'].map(h => (_jsx("div", { style: { fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.06em' }, children: h }, h))) }), epData.customLimitPolicies.map((r, i) => (_jsxs("div", { style: { display: 'grid', gridTemplateColumns: '1fr 80px 80px 120px', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 12, alignItems: 'center' }, children: [_jsx("span", { style: { color: 'var(--text)', fontWeight: 600 }, children: r.displayName }), _jsxs("span", { style: { color: 'var(--amber)', fontWeight: 700, fontFamily: 'monospace' }, children: [r.limit, " devices"] }), _jsxs("span", { style: { color: 'var(--text-dim)' }, children: ["P", r.priority] }), _jsx("span", { style: { color: 'var(--text-dim)', fontSize: 11 }, children: new Date(r.lastModifiedDateTime).toLocaleDateString() })] }, i)))] })), (epData.customPlatformPolicies?.length ?? 0) > 0 && (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }, children: [_jsxs("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }, children: ["Custom Platform Policies (", epData.customPlatformPolicies.length, ")", _jsx("span", { style: { fontSize: 11, fontWeight: 400, color: 'var(--text-dim)', marginLeft: 8 }, children: "\u2014 group-specific overrides" })] }), epData.customPlatformPolicies.map((policy, pi) => (_jsxs("div", { style: { marginBottom: pi < epData.customPlatformPolicies.length - 1 ? 12 : 0 }, children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', marginBottom: 6 }, children: [_jsx("span", { style: { fontSize: 12, fontWeight: 700, color: 'var(--text)' }, children: policy.displayName }), _jsxs("span", { style: { fontSize: 10, color: 'var(--text-dim)' }, children: ["Priority ", policy.priority, " \u00B7 ", new Date(policy.lastModifiedDateTime).toLocaleDateString()] })] }), _jsx("div", { style: { display: 'grid', gridTemplateColumns: '120px 120px 160px 1fr', gap: 8, padding: '4px 0 4px', borderBottom: '1px solid var(--border)', marginBottom: 2 }, children: ['Platform', 'Status', 'Personal Devices', 'OS Range'].map(h => (_jsx("div", { style: { fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.06em' }, children: h }, h))) }), [
+                                                { label: 'Windows', r: policy.windowsRestriction },
+                                                { label: 'iOS / iPadOS', r: policy.iosRestriction },
+                                                { label: 'Android', r: policy.androidRestriction },
+                                                { label: 'macOS', r: policy.macOSRestriction },
+                                            ].filter(x => x.r).map(({ label, r }) => (_jsx(PlatRow, { label: label, r: r }, label)))] }, pi)))] })), epData.autopilot && (_jsxs("div", { style: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }, children: [_jsxs("div", { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }, children: [_jsxs("div", { style: { fontSize: 13, fontWeight: 700, color: 'var(--text)' }, children: ["Windows Autopilot \u2014 ", epData.autopilot.total, " devices"] }), _jsx("div", { style: { display: 'flex', gap: 6 }, children: Object.entries(epData.autopilot.enrollmentStates).map(([state, count]) => {
                                                     const col = stateColor(state);
                                                     return _jsxs("span", { style: { fontSize: 10, padding: '2px 7px', borderRadius: 4, fontWeight: 700, background: col.bg, color: col.color }, children: [state, ": ", count] }, state);
                                                 }) })] }), epData.autopilot.devices.length > 0 && (_jsx("div", { style: { overflowX: 'auto' }, children: _jsxs("table", { style: { width: '100%', borderCollapse: 'collapse', fontSize: 11 }, children: [_jsx("thead", { children: _jsx("tr", { style: { borderBottom: '2px solid var(--border)' }, children: ['Serial Number', 'Manufacturer', 'Model', 'Group Tag', 'State', 'Last Contact'].map(h => (_jsx("th", { style: { padding: '6px 8px', textAlign: 'left', color: 'var(--text-dim)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', whiteSpace: 'nowrap' }, children: h }, h))) }) }), _jsx("tbody", { children: epData.autopilot.devices.map((d, i) => {

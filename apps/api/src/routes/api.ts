@@ -635,6 +635,17 @@ apiRouter.post('/ocr/explain', async (req, res) => {
   }
 });
 
+apiRouter.post('/ocr/explain', async (req, res) => {
+  const text = typeof req.body?.text === 'string' ? req.body.text : '';
+  if (!text.trim()) return res.status(400).json({ message: 'Missing OCR text.' });
+  try {
+    const explanation = await explainOcrText(text);
+    return res.json(explanation);
+  } catch (error: any) {
+    return res.status(500).json({ message: error?.message ?? 'OCR explanation failed.' });
+  }
+});
+
 apiRouter.post('/devices/:deviceId/sync', async (req, res) => {
   try {
     const deviceId = String(req.params.deviceId);
@@ -701,7 +712,6 @@ apiRouter.post('/devices/bulk', async (req, res) => {
     return res.status(500).json({ success: false, message: error?.message ?? 'Bulk action failed.' });
   }
 });
-
 
 apiRouter.get('/incidents/workflows', async (_req, res) => {
   try {
@@ -888,7 +898,6 @@ Last Sync: ${d.lastSyncDateTime}`
   }
 });
 
-// ── Graph Proxy — safe pass-through for Graph Explorer ────────────────────────
 apiRouter.post('/graph/proxy', async (req, res) => {
   try {
     const token = req.session?.accessToken;
@@ -923,7 +932,6 @@ apiRouter.post('/graph/proxy', async (req, res) => {
   }
 });
 
-// ── Enrollment Failures — via troubleshootingEvents ─────────────────────────
 apiRouter.get('/graph/enrollment-failures', async (req, res) => {
   try {
     const token = req.session?.accessToken;
@@ -991,7 +999,6 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
   }
 });
 
-// ── Enrollment Policy — restrictions + MDM + Autopilot ───────────────────────
 apiRouter.get('/graph/enrollment-policy', async (req, res) => {
   try {
     const token = req.session?.accessToken;
@@ -1001,29 +1008,40 @@ apiRouter.get('/graph/enrollment-policy', async (req, res) => {
     const hdr = { Authorization: 'Bearer ' + token, Accept: 'application/json' };
 
     const [configsRes, mgmtRes, autopilotRes] = await Promise.all([
-      fetch(G + '/v1.0/deviceManagement/deviceEnrollmentConfigurations', { headers: hdr }),
+      fetch(G + '/v1.0/deviceManagement/deviceEnrollmentConfigurations?$top=50', { headers: hdr }),
       fetch(G + '/v1.0/deviceManagement', { headers: hdr }),
-      fetch(G + '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$top=200&$select=id,serialNumber,manufacturer,model,groupTag,enrollmentState,lastContactedDateTime,managedDeviceId,userPrincipalName', { headers: hdr }),
+      // No $select — use full payload to avoid OData property errors
+      fetch(G + '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$top=200', { headers: hdr }),
     ]);
 
     // Parse enrollment configurations
     const configsData: any = configsRes.ok ? await configsRes.json() : { value: [] };
     const configs: any[] = configsData.value ?? [];
 
-    const limitConfig = configs.find((c: any) => c['@odata.type'] === '#microsoft.graph.deviceEnrollmentLimitConfiguration');
-    const platformConfig = configs.find((c: any) => c['@odata.type'] === '#microsoft.graph.deviceEnrollmentPlatformRestrictionsConfiguration');
-    const customRestrictions = configs.filter((c: any) =>
+    // Default limit config (priority 0)
+    const limitConfig = configs.find((c: any) =>
+      c['@odata.type'] === '#microsoft.graph.deviceEnrollmentLimitConfiguration' && c.priority === 0
+    );
+    // Custom limit configs (priority > 0, per-group overrides)
+    const customLimitConfigs = configs.filter((c: any) =>
+      c['@odata.type'] === '#microsoft.graph.deviceEnrollmentLimitConfiguration' && c.priority > 0
+    );
+    // Default platform restrictions (priority 0)
+    const platformConfig = configs.find((c: any) =>
+      c['@odata.type'] === '#microsoft.graph.deviceEnrollmentPlatformRestrictionsConfiguration' && c.priority === 0
+    );
+    // Custom platform restriction policies (priority > 0)
+    const customPlatformConfigs = configs.filter((c: any) =>
       c['@odata.type'] === '#microsoft.graph.deviceEnrollmentPlatformRestrictionsConfiguration' && c.priority > 0
     );
 
     // Parse MDM info
     const mgmtData: any = mgmtRes.ok ? await mgmtRes.json() : {};
 
-    // Parse Autopilot devices
+    // Parse Autopilot
     const autopilotData: any = autopilotRes.ok ? await autopilotRes.json() : { value: [], '@odata.count': 0 };
     const autopilotDevices: any[] = autopilotData.value ?? [];
     const autopilotTotal: number = autopilotData['@odata.count'] ?? autopilotDevices.length;
-
     const enrollmentStates: Record<string, number> = {};
     autopilotDevices.forEach((d: any) => {
       const state = d.enrollmentState ?? 'unknown';
@@ -1044,15 +1062,26 @@ apiRouter.get('/graph/enrollment-policy', async (req, res) => {
         policyName: platformConfig.displayName,
         lastModified: platformConfig.lastModifiedDateTime,
       } : null,
-      customRestrictions: customRestrictions.map((c: any) => ({
+      customLimitPolicies: customLimitConfigs.map((c: any) => ({
+        displayName: c.displayName,
+        priority: c.priority,
+        limit: c.limit,
+        lastModifiedDateTime: c.lastModifiedDateTime,
+      })),
+      customPlatformPolicies: customPlatformConfigs.map((c: any) => ({
         displayName: c.displayName,
         priority: c.priority,
         lastModifiedDateTime: c.lastModifiedDateTime,
+        iosRestriction: c.iosRestriction,
+        windowsRestriction: c.windowsRestriction,
+        androidRestriction: c.androidRestriction,
+        macOSRestriction: c.macOSRestriction,
+        windowsMobileRestriction: c.windowsMobileRestriction,
       })),
       autopilot: {
         total: autopilotTotal,
         enrollmentStates,
-        devices: autopilotDevices.slice(0, 50).map((d: any) => ({
+        devices: autopilotDevices.slice(0, 100).map((d: any) => ({
           id: d.id,
           serialNumber: d.serialNumber,
           manufacturer: d.manufacturer,
@@ -1061,7 +1090,8 @@ apiRouter.get('/graph/enrollment-policy', async (req, res) => {
           enrollmentState: d.enrollmentState,
           lastContactedDateTime: d.lastContactedDateTime,
           managedDeviceId: d.managedDeviceId,
-          userPrincipalName: d.userPrincipalName,
+          userPrincipalName: d.userPrincipalName ?? d.addressableUserName ?? '',
+          displayName: d.displayName,
         })),
       },
     });
@@ -1070,3 +1100,4 @@ apiRouter.get('/graph/enrollment-policy', async (req, res) => {
     return res.status(500).json({ message: msg });
   }
 });
+
