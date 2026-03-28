@@ -987,7 +987,7 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
       userPrincipalName: item.userPrincipalName ?? item.userId ?? null,
       enrollmentMethod: item.enrollmentType ?? null,
       deviceId: item.deviceId ?? item.managedDeviceIdentifier ?? null,
-      deviceName: item.deviceId ?? item.managedDeviceIdentifier ?? null,
+      deviceName: item.deviceDisplayName ?? item.deviceId ?? null,
       correlationId: item.correlationId ?? null,
     }));
 

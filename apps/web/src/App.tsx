@@ -773,13 +773,13 @@ function EnrollmentFailuresView({ efRows, efLoading, efError, efSearch, setEfSea
 // ── GraphExplorerView ─────────────────────────────────────────────────────────
 const GQ_TEMPLATES = [
   { label: 'Managed Devices', url: '/v1.0/deviceManagement/managedDevices?$top=20&$select=deviceName,operatingSystem,complianceState,lastSyncDateTime,userPrincipalName' },
-  { label: 'Non-Compliant Devices', url: '/v1.0/deviceManagement/managedDevices?$filter=complianceState eq \'noncompliant\'&$select=deviceName,operatingSystem,userPrincipalName,lastSyncDateTime&$top=20' },
-  { label: 'Enrollment Failures', url: '/v1.0/deviceManagement/managedDevices?$filter=complianceState eq \'noncompliant\' or complianceState eq \'unknown\'&$select=deviceName,operatingSystem,osVersion,complianceState,userPrincipalName,deviceEnrollmentType&$top=20' },
+  { label: 'Non-Compliant Devices', url: "/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant'&$select=deviceName,operatingSystem,userPrincipalName,lastSyncDateTime&$top=20" },
+  { label: 'Enrollment Failures', url: "/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=deviceName,operatingSystem,osVersion,complianceState,userPrincipalName,deviceEnrollmentType&$top=20" },
   { label: 'Active Users', url: '/v1.0/users?$filter=accountEnabled eq true&$select=displayName,userPrincipalName,mail&$top=20' },
-  { label: 'Autopilot Devices', url: '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$select=serialNumber,model,groupTag,managedDeviceId&$top=20' },
+  { label: 'Autopilot Devices', url: '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$select=serialNumber,groupTag,enrollmentState,lastContactedDateTime,managedDeviceId&$top=20' },
   { label: 'Enrollment Restrictions', url: '/v1.0/deviceManagement/deviceEnrollmentConfigurations?$select=displayName,priority,createdDateTime,lastModifiedDateTime&$top=20' },
-  { label: 'Compliance Policies', url: '/beta/deviceManagement/deviceCompliancePolicies?$select=id,displayName,lastModifiedDateTime&$top=20' },
-  { label: 'Config Profiles', url: '/v1.0/deviceManagement/deviceConfigurations?$select=id,displayName,lastModifiedDateTime&$top=20' },
+  { label: 'Stale Devices (30d+)', url: "/v1.0/deviceManagement/managedDevices?$filter=lastSyncDateTime le " + new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0] + "T00:00:00Z&$select=deviceName,operatingSystem,lastSyncDateTime,userPrincipalName,complianceState&$top=20" },
+  { label: 'Enrolled This Month', url: "/v1.0/deviceManagement/managedDevices?$filter=enrolledDateTime ge " + new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0] + "T00:00:00Z&$select=deviceName,operatingSystem,enrolledDateTime,userPrincipalName,complianceState&$top=50" },
 ];
 
 function GraphExplorerView({ gqUrl, setGqUrl, gqResult, setGqResult, gqLoading, setGqLoading, gqError, setGqError, gqSelectedTemplate, setGqSelectedTemplate, auth, api, addToast }: any) {
