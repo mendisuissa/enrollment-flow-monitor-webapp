@@ -53,3 +53,8 @@ export declare function getEnrollmentFailures(): Promise<{
     rows: Record<string, unknown>[];
     message: string;
 }>;
+export declare function deviceRetire(deviceId: string): Promise<any>;
+export declare function deviceWipe(deviceId: string, keepEnrollmentData?: boolean): Promise<any>;
+export declare function deviceCollectDiagnostics(deviceId: string): Promise<any>;
+export declare function deviceRotateBitLockerKeys(deviceId: string): Promise<any>;
+export declare function deviceResetPasscode(deviceId: string): Promise<any>;

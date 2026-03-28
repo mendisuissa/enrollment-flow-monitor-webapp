@@ -84,3 +84,33 @@ export async function getEnrollmentFailures() {
   const response = await api.get('/graph/enrollment-failures');
   return response.data as { rows: Record<string, unknown>[]; message: string };
 }
+
+export async function deviceRetire(deviceId: string) {
+  const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/retire`, { method: 'POST', credentials: 'include' });
+  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).message ?? 'Retire failed.');
+  return res.json();
+}
+
+export async function deviceWipe(deviceId: string, keepEnrollmentData = false) {
+  const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/wipe`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keepEnrollmentData }) });
+  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).message ?? 'Wipe failed.');
+  return res.json();
+}
+
+export async function deviceCollectDiagnostics(deviceId: string) {
+  const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/collectDiagnostics`, { method: 'POST', credentials: 'include' });
+  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).message ?? 'Collect diagnostics failed.');
+  return res.json();
+}
+
+export async function deviceRotateBitLockerKeys(deviceId: string) {
+  const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/rotateBitLockerKeys`, { method: 'POST', credentials: 'include' });
+  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).message ?? 'BitLocker key rotation failed.');
+  return res.json();
+}
+
+export async function deviceResetPasscode(deviceId: string) {
+  const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/resetPasscode`, { method: 'POST', credentials: 'include' });
+  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).message ?? 'Reset passcode failed.');
+  return res.json();
+}

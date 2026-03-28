@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { IncidentWorkflowRecord, IncidentWorkflowStatus, ViewName } from '@efm/shared';
-type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home' | 'adminDashboard' | 'graphQuery' | 'enrollmentFailures' | 'enrollmentPolicy';
-import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction, getExportUrl, getIncidentWorkflows, saveIncidentWorkflow } from './api/client.js';
+type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home' | 'adminDashboard' | 'graphQuery' | 'enrollmentFailures' | 'enrollmentPolicy' | 'complianceDrift';
+import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction, deviceRetire, deviceWipe, deviceCollectDiagnostics, deviceRotateBitLockerKeys, deviceResetPasscode, getExportUrl, getIncidentWorkflows, saveIncidentWorkflow } from './api/client.js';
 import { recognize } from 'tesseract.js';
 
 type Row = Record<string, unknown>;
@@ -61,6 +61,7 @@ const views: Array<{ id: ExtendedViewName; label: string; icon: string }> = [
   { id: 'incidents', label: 'Fix Queue', icon: '🚨' },
   { id: 'enrollmentFailures', label: 'Enrollment Failures', icon: '⛔' },
   { id: 'enrollmentPolicy', label: 'Enrollment Policy', icon: '🛡️' },
+  { id: 'complianceDrift', label: 'Compliance Drift', icon: '📉' },
   { id: 'permissionCheck', label: 'Access Validation', icon: '🔑' },
   { id: 'enrollmentErrorCatalog', label: 'Failure Catalog', icon: '📚' },
   { id: 'reports', label: 'Executive Reports', icon: '📈' },
@@ -348,72 +349,86 @@ function EfmWalkthrough({ onSignIn }: { onSignIn: () => void }) {
   const steps = [
     {
       icon: '🎛️', title: 'Command Center',
-      desc: 'Real-time enrollment health dashboard. Instant visibility into compliance rates, failed enrollments, and platform breakdown across your entire tenant.',
+      desc: 'Real-time enrollment health. Instant visibility into compliance rates, failed enrollments, and platform breakdown across your entire tenant.',
       stats: [
-        { label: 'Health Score', value: '84', color: '#22c55e' },
-        { label: 'Total Devices', value: '128', color: '#e2e8f0' },
-        { label: 'Failed', value: '11', color: '#ef4444' },
+        { label: 'Health Score', value: '84%', color: '#22c55e' },
+        { label: 'Total Devices', value: '247', color: '#e2e8f0' },
+        { label: 'Failures', value: '11', color: '#ef4444' },
       ],
       rows: [
-        { name: 'iis-srv-devops',   sub: 'Win 10.0.20348', status: 'UNKNOWN',   cls: 'badge-unk' },
-        { name: 'CPC-talys-O4MMV',  sub: 'Win 10.0.26200', status: 'COMPLIANT', cls: 'badge-ok'  },
-        { name: 'BG-DAGAN-AAT',     sub: 'Win 10.0.20348', status: 'FAILED',    cls: 'badge-err' },
+        { name: 'iis-srv-devops', sub: 'Windows 10.0.20348', status: 'UNKNOWN', cls: 'badge-unk' },
+        { name: 'CPC-talys-O4MMV', sub: 'Windows 10.0.26200', status: 'COMPLIANT', cls: 'badge-ok' },
+        { name: 'BG-DAGAN-AAT', sub: 'Windows 10.0.20348', status: 'FAILED', cls: 'badge-err' },
       ],
     },
     {
-      icon: '📚', title: 'Failure Catalog',
-      desc: '53+ known enrollment error codes with root causes and step-by-step remediation — searchable by code, platform, and severity.',
+      icon: '⛔', title: 'Enrollment Failures',
+      desc: 'Live enrollment failures pulled directly from Intune via Graph API. Every failure includes category, correlation ID, and targeted fix steps.',
       stats: [
-        { label: 'Total errors', value: '53+', color: '#60a5fa' },
-        { label: 'High severity', value: '18', color: '#ef4444' },
-        { label: 'Platforms', value: '4', color: '#f59e0b' },
+        { label: 'Live Failures', value: '7', color: '#ef4444' },
+        { label: 'Catalog Match', value: '6/7', color: '#22c55e' },
+        { label: 'Fix Steps', value: 'Auto', color: '#f59e0b' },
       ],
       rows: [
-        { name: '0x80180014 — MDM enrollment not allowed',     sub: 'Windows · iOS · Android', status: 'HIGH',   cls: 'badge-err' },
-        { name: '0x80070774 — Autopilot profile not assigned', sub: 'Windows',                  status: 'HIGH',   cls: 'badge-err' },
-        { name: '0x80CF0014 — Company Portal not updated',     sub: 'Windows · Android',        status: 'LOW',    cls: 'badge-ok'  },
+        { name: 'UserAbandonment — Android 16', sub: 'userEnrollment · 10/20/2025', status: 'CATALOG', cls: 'badge-ok' },
+        { name: 'Authentication — Windows 11', sub: 'userEnrollment · 10/18/2025', status: 'CATALOG', cls: 'badge-ok' },
+        { name: 'DeviceLimit — iOS 17', sub: 'userEnrollment · 10/15/2025', status: 'GENERIC', cls: 'badge-unk' },
       ],
     },
     {
-      icon: '🧠', title: 'OCR & AI Assistant',
-      desc: 'Upload any Intune error screenshot. OCR extracts the text automatically, then AI provides root cause analysis and remediation steps.',
+      icon: '🛡️', title: 'Enrollment Policy',
+      desc: 'Live view of your Intune enrollment configuration — platform restrictions, device limits, Autopilot devices, and custom policies in one panel.',
       stats: [
-        { label: 'Category', value: 'MDMEnrollment', color: '#60a5fa' },
-        { label: 'Confidence', value: '92%', color: '#22c55e' },
-        { label: 'Actions', value: '3 steps', color: '#f59e0b' },
+        { label: 'MDM Authority', value: 'Intune', color: '#22c55e' },
+        { label: 'Device Limit', value: '5 devices', color: '#f59e0b' },
+        { label: 'Autopilot', value: '14 registered', color: '#60a5fa' },
       ],
       rows: [
-        { name: 'Run dsregcmd /status → verify AzureAdJoined=YES', sub: 'Recommended action 1', status: 'STEP 1', cls: 'badge-unk' },
-        { name: 'Verify Intune license + MDM user scope',           sub: 'Recommended action 2', status: 'STEP 2', cls: 'badge-unk' },
-        { name: 'Clear stale EnterpriseMgmt enrollment state',      sub: 'Recommended action 3', status: 'STEP 3', cls: 'badge-unk' },
+        { name: 'Windows — Allowed', sub: 'Personal + Corporate · All OS versions', status: 'ALLOW', cls: 'badge-ok' },
+        { name: 'Android — Blocked', sub: 'Platform restriction active', status: 'BLOCK', cls: 'badge-err' },
+        { name: 'iOS/iPadOS — Allowed', sub: 'Personal + Corporate · All OS versions', status: 'ALLOW', cls: 'badge-ok' },
       ],
     },
     {
-      icon: '✅', title: 'Readiness Checklist',
-      desc: 'Pre-flight verification before every rollout. Automatically checks Autopilot, ADE iOS/macOS, and Android Enterprise prerequisites.',
+      icon: '🔧', title: 'Remediation Actions',
+      desc: 'Remote actions on any device — Sync, Reboot, Retire, Wipe, BitLocker Key Rotation, Reset Passcode, Collect Diagnostics. All with audit trail.',
       stats: [
-        { label: 'Autopilot', value: '✓ Ready', color: '#22c55e' },
-        { label: 'ADE iOS',   value: '⚠ 2 gaps', color: '#f59e0b' },
-        { label: 'Android',   value: '✓ Ready', color: '#22c55e' },
+        { label: 'Actions', value: '8 types', color: '#60a5fa' },
+        { label: 'Confirmation', value: 'Required', color: '#f59e0b' },
+        { label: 'Audit Log', value: 'Full trail', color: '#22c55e' },
       ],
       rows: [
-        { name: 'Windows Devices Detected',  sub: '6 devices found',              status: 'PASS', cls: 'badge-ok'  },
-        { name: 'MDM User Scope Configured', sub: 'Set to All or target group',    status: 'PASS', cls: 'badge-ok'  },
-        { name: 'Hardware Hash Uploaded',    sub: 'Check Enrollment → Autopilot',  status: 'GAP',  cls: 'badge-err' },
+        { name: '🔁 Sync Device', sub: 'Force Intune check-in', status: 'SAFE', cls: 'badge-ok' },
+        { name: '📤 Retire Device', sub: 'Remove management, keep data', status: 'SAFE', cls: 'badge-ok' },
+        { name: '🗑️ Wipe Device', sub: 'Factory reset — requires confirmation', status: 'DANGER', cls: 'badge-err' },
       ],
     },
     {
-      icon: '⚡', title: 'Graph Query & Reports',
-      desc: 'Run Microsoft Graph API queries directly with pre-built templates. Export live compliance reports as PDF for stakeholders in one click.',
+      icon: '📉', title: 'Compliance Drift',
+      desc: 'Track compliance state over time. Each snapshot records compliant/non-compliant/unknown counts. Visualize trends and catch drops before they escalate.',
       stats: [
-        { label: 'Templates', value: '6 built-in', color: '#60a5fa' },
-        { label: 'Export', value: 'PDF / CSV / JSON', color: '#f59e0b' },
+        { label: 'Compliance Rate', value: '91%', color: '#22c55e' },
+        { label: '7-day Trend', value: '+3%', color: '#22c55e' },
+        { label: 'Snapshots', value: 'Unlimited', color: '#60a5fa' },
+      ],
+      rows: [
+        { name: 'Snapshot 28/03/2026', sub: '225 compliant · 18 non-compliant · 4 unknown', status: '91%', cls: 'badge-ok' },
+        { name: 'Snapshot 21/03/2026', sub: '218 compliant · 22 non-compliant · 7 unknown', status: '88%', cls: 'badge-unk' },
+        { name: 'Snapshot 14/03/2026', sub: '210 compliant · 28 non-compliant · 9 unknown', status: '85%', cls: 'badge-err' },
+      ],
+    },
+    {
+      icon: '⚡', title: 'Graph Explorer',
+      desc: 'Run Microsoft Graph API queries directly — 8 built-in templates. Export live reports as CSV/JSON for stakeholders in one click.',
+      stats: [
+        { label: 'Templates', value: '8 built-in', color: '#60a5fa' },
+        { label: 'Export', value: 'CSV / JSON', color: '#f59e0b' },
         { label: 'Data', value: 'Real-time', color: '#22c55e' },
       ],
       rows: [
-        { name: 'GET /deviceManagement/managedDevices',              sub: 'All Devices template',       status: 'READY', cls: 'badge-ok' },
-        { name: 'GET /deviceManagement/deviceCompliancePolicies',    sub: 'Compliance template',        status: 'READY', cls: 'badge-ok' },
-        { name: 'GET /users?$filter=accountEnabled eq true',         sub: 'Users template',             status: 'READY', cls: 'badge-ok' },
+        { name: 'Managed Devices', sub: 'All devices in tenant', status: 'READY', cls: 'badge-ok' },
+        { name: 'Stale Devices (30d+)', sub: 'Devices not synced in 30 days', status: 'READY', cls: 'badge-ok' },
+        { name: 'Enrolled This Month', sub: 'Recent enrollments', status: 'READY', cls: 'badge-ok' },
       ],
     },
   ];
@@ -422,65 +437,65 @@ function EfmWalkthrough({ onSignIn }: { onSignIn: () => void }) {
 
   return (
     <div className="efm-walkthrough">
-      <div className="efm-wt-header">
-        <span className="efm-wt-title">Platform tour</span>
+      <div className="efm-wt-left">
+        <div className="efm-wt-badge">{s.icon}</div>
+        <h2 className="efm-wt-heading">{s.title}</h2>
+        <p className="efm-wt-desc">{s.desc}</p>
+        <div className="efm-wt-stats">
+          {s.stats.map((st, i) => (
+            <div key={i} className="efm-wt-stat">
+              <div className="efm-wt-stat-val" style={{ color: st.color }}>{st.value}</div>
+              <div className="efm-wt-stat-lbl">{st.label}</div>
+            </div>
+          ))}
+        </div>
         <div className="efm-wt-tabs">
-          {steps.map((st, i) => (
+          {steps.map((_, i) => (
             <button key={i} className={"efm-wt-tab" + (i === step ? " active" : "")} onClick={() => setStep(i)}>
-              <span style={{ fontSize: 15 }}>{st.icon}</span>
-              <span className="efm-wt-tab-label">{st.title}</span>
+              {steps[i].icon}
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="efm-wt-body">
-        <div className="efm-wt-left">
-          <div className="efm-wt-feat-icon">{s.icon}</div>
-          <div className="efm-wt-feat-title">{s.title}</div>
-          <div className="efm-wt-feat-desc">{s.desc}</div>
-          <div className="efm-wt-stats">
-            {s.stats.map((st, i) => (
-              <div key={i} className="efm-wt-stat">
-                <div className="efm-wt-stat-val" style={{ color: st.color }}>{st.value}</div>
-                <div className="efm-wt-stat-lbl">{st.label}</div>
-              </div>
-            ))}
+        <div className="efm-wt-nav">
+          <button className="efm-wt-nav-btn" onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0}>← Prev</button>
+          <div className="efm-wt-dots">
+            {steps.map((_, i) => <div key={i} className={"efm-wt-dot" + (i === step ? " active" : "")} onClick={() => setStep(i)} />)}
           </div>
+          {step < steps.length - 1
+            ? <button className="efm-wt-nav-btn" onClick={() => setStep(step + 1)}>Next →</button>
+            : <button className="btn btn-primary welcome-signin-btn" style={{ padding: '6px 18px', fontSize: 12 }} onClick={onSignIn}>🔑 Get started</button>
+          }
+        </div>
+        <div style={{ marginTop: 16 }}>
           <button className="btn btn-primary welcome-signin-btn" style={{ marginTop: 24, width: '100%' }} onClick={onSignIn}>
-            🔑 Sign in to use this feature
+            🔑 Connect your Intune tenant
           </button>
-        </div>
-
-        <div className="efm-wt-right">
-          <div className="efm-demo-label">Live preview (demo data)</div>
-          <div className="efm-device-preview" style={{ marginTop: 8 }}>
-            {s.rows.map((r, i) => (
-              <div key={i} className="efm-device-row">
-                <div className="efm-device-info">
-                  <div className="efm-device-name">{r.name}</div>
-                  <div className="efm-device-os">{r.sub}</div>
-                </div>
-                <span className={"efm-badge " + r.cls}>{r.status}</span>
-              </div>
-            ))}
+          <div style={{ textAlign: 'center', marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>
+            30-day free trial · No credit card required · $5/month after trial
           </div>
         </div>
       </div>
-
-      <div className="efm-wt-nav">
-        <button className="efm-wt-nav-btn" onClick={() => setStep(Math.max(0, step - 1))} disabled={step === 0}>← Prev</button>
-        <div className="efm-wt-dots">
-          {steps.map((_, i) => <div key={i} className={"efm-wt-dot" + (i === step ? " active" : "")} onClick={() => setStep(i)} />)}
+      <div className="efm-wt-right">
+        <div className="efm-wt-mock-topbar">
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--amber)' }}>⚡ Enrollment Flow Monitor</span>
+          <span className="efm-wt-mock-pill">● Live</span>
         </div>
-        {step < steps.length - 1
-          ? <button className="efm-wt-nav-btn" onClick={() => setStep(step + 1)}>Next →</button>
-          : <button className="btn btn-primary welcome-signin-btn" style={{ padding: '6px 18px', fontSize: 12 }} onClick={onSignIn}>🔑 Get started</button>
-        }
+        <div className="efm-wt-mock-rows">
+          {s.rows.map((r, i) => (
+            <div key={i} className="efm-wt-mock-row">
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{r.name}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>{r.sub}</div>
+              </div>
+              <span className={"efm-wt-badge-pill " + r.cls}>{r.status}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
+
 
 // ── EnrollmentFailuresView ────────────────────────────────────────────────────
 function getFixSteps(row: any, ERROR_CATALOG: any[]): { title: string; steps: string[]; matched: boolean } {
@@ -727,28 +742,63 @@ function EnrollmentFailuresView({ efRows, efLoading, efError, efSearch, setEfSea
               <span style={{ fontSize: 12, color: 'var(--text)', wordBreak: 'break-all' }}>{val}</span>
             </div>
           ))}
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em' }}>Actions</div>
-            <button className="btn btn-secondary" style={{ width: '100%', justifyContent: 'flex-start', gap: 8, fontSize: 12 }}
-              disabled={!selectedEfRow.deviceId || efRetrying || !auth.hasWritePermissions}
-              title={!auth.hasWritePermissions ? 'Write permissions required' : !selectedEfRow.deviceId ? 'No device ID — device may not have reached Intune yet' : ''}
-              onClick={async () => {
-                if (!selectedEfRow.deviceId) return;
-                setEfRetrying(true);
-                try {
-                  await api.post(`/devices/${selectedEfRow.deviceId}/sync`);
-                  addToast('success', `Sync sent to ${selectedEfRow.deviceName ?? selectedEfRow.deviceId}`);
-                } catch (err: any) {
-                  addToast('error', err?.response?.data?.message ?? 'Sync failed.');
-                } finally { setEfRetrying(false); }
-              }}>
-              <span>🔁</span><span>{efRetrying ? 'Sending sync…' : 'Retry / Sync Device'}</span>
-            </button>
-            {(!selectedEfRow.deviceId || !auth.hasWritePermissions) && (
-              <div style={{ fontSize: 10, color: 'var(--text-dim)', paddingLeft: 2 }}>
-                {!auth.hasWritePermissions ? 'Write permissions required.' : 'No device ID — device may not have reached Intune yet.'}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 2 }}>Actions</div>
+            {!auth.hasWritePermissions && (
+              <div style={{ fontSize: 10, color: 'var(--amber)', background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 6, padding: '6px 10px' }}>
+                🔒 Upgrade to Write Access to enable actions
               </div>
             )}
+            {!selectedEfRow.deviceId && auth.hasWritePermissions && (
+              <div style={{ fontSize: 10, color: 'var(--text-dim)', background: 'rgba(255,255,255,.04)', borderRadius: 6, padding: '6px 10px' }}>
+                ⚠ No device ID — device may not have reached Intune yet
+              </div>
+            )}
+            {[
+              { icon: '🔁', label: 'Sync Device', endpoint: 'sync', os: null, danger: false, desc: 'Force device to check in with Intune' },
+              { icon: '🔄', label: 'Reboot Device', endpoint: 'reboot', os: 'Windows', danger: false, desc: 'Send remote reboot command' },
+              { icon: '📤', label: 'Retire Device', endpoint: 'retire', os: null, danger: false, desc: 'Remove management — keeps user data' },
+              { icon: '🗑️', label: 'Wipe Device', endpoint: 'wipe', os: null, danger: true, desc: 'Factory reset — ALL data will be erased' },
+              { icon: '🔑', label: 'Rotate BitLocker Keys', endpoint: 'rotateBitLockerKeys', os: 'Windows', danger: false, desc: 'Rotate BitLocker recovery key in Entra ID' },
+              { icon: '📱', label: 'Reset Passcode', endpoint: 'resetPasscode', os: 'iOS/Android', danger: false, desc: 'Clear device PIN/passcode' },
+              { icon: '📋', label: 'Collect Diagnostics', endpoint: 'collectDiagnostics', os: 'Windows', danger: false, desc: 'Download device logs from Intune portal' },
+            ].map(action => {
+              const osMatch = !action.os ||
+                (action.os === 'Windows' && selectedEfRow.os?.toLowerCase().includes('windows')) ||
+                (action.os === 'iOS/Android' && (selectedEfRow.os?.toLowerCase().includes('ios') || selectedEfRow.os?.toLowerCase().includes('android')));
+              if (!osMatch) return null;
+              return (
+                <button key={action.endpoint}
+                  className="btn btn-secondary"
+                  style={{ width: '100%', justifyContent: 'flex-start', gap: 8, fontSize: 11, padding: '7px 10px', border: action.danger ? '1px solid rgba(239,68,68,.25)' : undefined }}
+                  disabled={!selectedEfRow.deviceId || efRetrying || !auth.hasWritePermissions}
+                  title={action.desc}
+                  onClick={async () => {
+                    if (!selectedEfRow.deviceId) return;
+                    if (action.danger) {
+                      if (!window.confirm(`⚠️ WIPE DEVICE
+
+This will factory reset "${selectedEfRow.deviceName ?? selectedEfRow.deviceId}".
+
+ALL data will be permanently erased. This cannot be undone.
+
+Proceed?`)) return;
+                    }
+                    setEfRetrying(true);
+                    try {
+                      const res: any = await api.post(`/devices/${selectedEfRow.deviceId}/${action.endpoint}`);
+                      addToast('success', res.data?.message ?? `${action.label} sent.`);
+                    } catch (err: any) {
+                      addToast('error', err?.response?.data?.message ?? `${action.label} failed.`);
+                    } finally { setEfRetrying(false); }
+                  }}>
+                  <span>{action.icon}</span>
+                  <span style={{ flex: 1 }}>{efRetrying ? 'Sending…' : action.label}</span>
+                  {action.danger && <span style={{ fontSize: 9, color: 'var(--red)', fontWeight: 700 }}>DANGER</span>}
+                  {action.os && <span style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'monospace' }}>{action.os}</span>}
+                </button>
+              );
+            })}
           </div>
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -776,7 +826,7 @@ const GQ_TEMPLATES = [
   { label: 'Non-Compliant Devices', url: "/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant'&$select=deviceName,operatingSystem,userPrincipalName,lastSyncDateTime&$top=20" },
   { label: 'Enrollment Failures', url: "/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=deviceName,operatingSystem,osVersion,complianceState,userPrincipalName,deviceEnrollmentType&$top=20" },
   { label: 'Active Users', url: '/v1.0/users?$filter=accountEnabled eq true&$select=displayName,userPrincipalName,mail&$top=20' },
-  { label: 'Autopilot Devices', url: '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$select=serialNumber,groupTag,enrollmentState,lastContactedDateTime,managedDeviceId&$top=20' },
+  { label: 'Autopilot Devices', url: '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$top=20' },
   { label: 'Enrollment Restrictions', url: '/v1.0/deviceManagement/deviceEnrollmentConfigurations?$select=displayName,priority,createdDateTime,lastModifiedDateTime&$top=20' },
   { label: 'Stale Devices (30d+)', url: "/v1.0/deviceManagement/managedDevices?$filter=lastSyncDateTime le " + new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0] + "T00:00:00Z&$select=deviceName,operatingSystem,lastSyncDateTime,userPrincipalName,complianceState&$top=20" },
   { label: 'Enrolled This Month', url: "/v1.0/deviceManagement/managedDevices?$filter=enrolledDateTime ge " + new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0] + "T00:00:00Z&$select=deviceName,operatingSystem,enrolledDateTime,userPrincipalName,complianceState&$top=50" },
@@ -884,6 +934,127 @@ function GraphExplorerView({ gqUrl, setGqUrl, gqResult, setGqResult, gqLoading, 
               {JSON.stringify(gqResult, null, 2)}
             </pre>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ComplianceDriftView ───────────────────────────────────────────────────────
+function ComplianceDriftView({ snapshots, loading, api, addToast, setSnapshots, setLoading }: any) {
+  const refresh = () => {
+    setLoading(true);
+    api.get('/graph/compliance-drift').then((res: any) => {
+      setSnapshots(res.data?.snapshots ?? []);
+      addToast('success', 'Compliance drift refreshed');
+    }).catch((err: any) => {
+      addToast('error', err?.response?.data?.message ?? 'Refresh failed');
+    }).finally(() => setLoading(false));
+  };
+
+  // Compute summary stats from snapshots
+  const latest = snapshots[snapshots.length - 1];
+  const previous = snapshots[snapshots.length - 2];
+  const complianceRate = latest ? Math.round((latest.compliant / Math.max(latest.total, 1)) * 100) : null;
+  const prevRate = previous ? Math.round((previous.compliant / Math.max(previous.total, 1)) * 100) : null;
+  const delta = complianceRate !== null && prevRate !== null ? complianceRate - prevRate : null;
+
+  const stateColor = (state: string) => {
+    if (state === 'compliant') return 'var(--green)';
+    if (state === 'noncompliant') return 'var(--red)';
+    return 'var(--amber)';
+  };
+
+  return (
+    <div className="error-catalog-shell">
+      <div className="error-catalog-header">
+        <div>
+          <div className="error-catalog-title">📉 Compliance Drift</div>
+          <div className="error-catalog-subtitle">Compliance state tracked over time — snapshot taken on each refresh</div>
+        </div>
+        <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={refresh}>↺ Take Snapshot</button>
+      </div>
+
+      {loading ? (
+        <div><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
+      ) : snapshots.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state-title">No snapshots yet</div>
+          <div className="empty-state-desc">Click "Take Snapshot" to record your current compliance state. Each refresh adds a new data point to track drift over time.</div>
+          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={refresh}>📸 Take First Snapshot</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* KPI row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+            {[
+              { label: 'Compliance Rate', value: complianceRate !== null ? complianceRate + '%' : '—', color: (complianceRate ?? 0) >= 90 ? 'var(--green)' : (complianceRate ?? 0) >= 70 ? 'var(--amber)' : 'var(--red)', sub: 'Latest snapshot' },
+              { label: '7-day Trend', value: delta !== null ? (delta >= 0 ? '+' : '') + delta + '%' : '—', color: delta === null ? 'var(--text)' : delta >= 0 ? 'var(--green)' : 'var(--red)', sub: delta === null ? 'Need 2+ snapshots' : delta >= 0 ? 'Improving' : 'Declining' },
+              { label: 'Total Devices', value: latest?.total ?? '—', color: 'var(--text)', sub: 'In Intune' },
+              { label: 'Snapshots', value: snapshots.length, color: 'var(--teal)', sub: 'Data points collected' },
+            ].map(c => (
+              <div key={c.label} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 5 }}>{c.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: c.color }}>{String(c.value)}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>{c.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Chart — SVG bar chart */}
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Compliance Over Time</div>
+            <div style={{ overflowX: 'auto' }}>
+              <svg width={Math.max(600, snapshots.length * 70)} height={180} style={{ display: 'block' }}>
+                {snapshots.map((s: any, i: number) => {
+                  const x = i * 70 + 35;
+                  const rate = Math.round((s.compliant / Math.max(s.total, 1)) * 100);
+                  const barH = Math.round((rate / 100) * 130);
+                  const barY = 150 - barH;
+                  const col = rate >= 90 ? '#10B981' : rate >= 70 ? '#F59E0B' : '#EF4444';
+                  return (
+                    <g key={i}>
+                      <rect x={x - 20} y={barY} width={40} height={barH} fill={col} fillOpacity={0.8} rx={3} />
+                      <text x={x} y={barY - 5} textAnchor="middle" fill={col} fontSize={10} fontWeight={700}>{rate}%</text>
+                      <text x={x} y={168} textAnchor="middle" fill="#4A6080" fontSize={9}>{new Date(s.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' })}</text>
+                    </g>
+                  );
+                })}
+                <line x1={0} y1={150} x2={Math.max(600, snapshots.length * 70)} y2={150} stroke="#263850" strokeWidth={1} />
+              </svg>
+            </div>
+          </div>
+
+          {/* Breakdown table */}
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 10 }}>Snapshot History</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                  {['Date', 'Compliant', 'Non-Compliant', 'Unknown', 'Total', 'Rate'].map(h => (
+                    <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: 'var(--text-dim)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[...snapshots].reverse().map((s: any, i: number) => {
+                  const rate = Math.round((s.compliant / Math.max(s.total, 1)) * 100);
+                  return (
+                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '7px 10px', color: 'var(--text-dim)', fontSize: 10 }}>{new Date(s.timestamp).toLocaleString()}</td>
+                      <td style={{ padding: '7px 10px', color: 'var(--green)', fontWeight: 700 }}>{s.compliant}</td>
+                      <td style={{ padding: '7px 10px', color: 'var(--red)', fontWeight: 700 }}>{s.noncompliant}</td>
+                      <td style={{ padding: '7px 10px', color: 'var(--amber)', fontWeight: 700 }}>{s.unknown}</td>
+                      <td style={{ padding: '7px 10px', color: 'var(--text)' }}>{s.total}</td>
+                      <td style={{ padding: '7px 10px' }}>
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, fontWeight: 700, background: rate >= 90 ? 'rgba(16,185,129,.12)' : rate >= 70 ? 'rgba(245,158,11,.12)' : 'rgba(239,68,68,.12)', color: rate >= 90 ? 'var(--green)' : rate >= 70 ? 'var(--amber)' : 'var(--red)' }}>{rate}%</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -1282,6 +1453,10 @@ export default function App() {
   const [epLoading, setEpLoading] = useState(false);
   const [epError, setEpError] = useState('');
 
+  // ── Compliance Drift state ───────────────────────────────
+  const [driftSnapshots, setDriftSnapshots] = useState<any[]>([]);
+  const [driftLoading, setDriftLoading] = useState(false);
+
   // ── AI Runbook state ─────────────────────────────────────
   const [runbookRow, setRunbookRow] = useState<any>(null);
   const [runbookText, setRunbookText] = useState('');
@@ -1413,6 +1588,19 @@ export default function App() {
           setStatusMessage('Enrollment Policy loaded.');
         }
       }).finally(() => setEpLoading(false));
+      return;
+    }
+    if (view === 'complianceDrift') {
+      setRows([]);
+      setSelectedIndex(null);
+      setStatusMessage('Loading compliance drift...');
+      setDriftLoading(true);
+      api.get('/graph/compliance-drift').then((res: any) => {
+        setDriftSnapshots(res.data?.snapshots ?? []);
+        setStatusMessage('Compliance drift loaded.');
+      }).catch(() => {
+        setStatusMessage('Compliance drift load failed.');
+      }).finally(() => setDriftLoading(false));
       return;
     }
 
@@ -1827,7 +2015,17 @@ export default function App() {
       if (action === 'sync') await deviceSync(deviceId);
       else if (action === 'reboot') await deviceReboot(deviceId);
       else if (action === 'autopilotReset') await deviceAutopilotReset(deviceId);
-      const label = action === 'sync' ? 'Sync' : action === 'reboot' ? 'Reboot' : 'Autopilot Reset';
+      else if (action === 'retire') await deviceRetire(deviceId);
+      else if (action === 'wipe') await deviceWipe(deviceId);
+      else if (action === 'collectDiagnostics') await deviceCollectDiagnostics(deviceId);
+      else if (action === 'rotateBitLockerKeys') await deviceRotateBitLockerKeys(deviceId);
+      else if (action === 'resetPasscode') await deviceResetPasscode(deviceId);
+      const labelMap: Record<string, string> = {
+        sync: 'Sync', reboot: 'Reboot', autopilotReset: 'Autopilot Reset',
+        retire: 'Retire', wipe: 'Wipe', collectDiagnostics: 'Collect Diagnostics',
+        rotateBitLockerKeys: 'Rotate BitLocker Keys', resetPasscode: 'Reset Passcode'
+      };
+      const label = labelMap[action] ?? action;
       addToast('success', `${label} command sent successfully`);
       addAuditLog(label, `Device: ${confirmModal.deviceName} (${deviceId})`, 'success');
     } catch (e: any) {
@@ -2449,7 +2647,7 @@ export default function App() {
   const [selectedDevices, setSelectedDevices] = useState<Set<string>>(new Set());
   const [confirmModal, setConfirmModal] = useState<{
     open: boolean;
-    action: 'sync' | 'reboot' | 'autopilotReset' | 'bulk-sync' | 'bulk-reboot' | 'bulk-reset' | null;
+    action: 'sync' | 'reboot' | 'autopilotReset' | 'bulk-sync' | 'bulk-reboot' | 'bulk-reset' | 'retire' | 'wipe' | 'collectDiagnostics' | 'rotateBitLockerKeys' | 'resetPasscode' | null;
     deviceId?: string;
     deviceName?: string;
     count?: number;
@@ -3046,7 +3244,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="panel" style={(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy') ? { gridColumn: '2 / 4' } : {}}>
+        <div className="panel" style={(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy' || currentView === 'complianceDrift') ? { gridColumn: '2 / 4' } : {}}>
           {currentView === 'adminDashboard' ? (
             <AdminDashboard />
           ) : currentView === 'privacy' ? (
@@ -3750,6 +3948,12 @@ export default function App() {
               runbookText={runbookText} setRunbookText={setRunbookText}
               runbookLoading={runbookLoading} setRunbookLoading={setRunbookLoading}
             />
+          ) : currentView === 'complianceDrift' ? (
+            <ComplianceDriftView
+              snapshots={driftSnapshots} loading={driftLoading}
+              api={api} addToast={addToast}
+              setSnapshots={setDriftSnapshots} setLoading={setDriftLoading}
+            />
           ) : currentView === 'graphQuery' ? (
             <GraphExplorerView
               gqUrl={gqUrl} setGqUrl={setGqUrl}
@@ -4042,7 +4246,7 @@ export default function App() {
           )}
         </div>
 
-        <div className={`panel detail-rail ${currentView === 'dashboard' ? 'dashboard-rail' : ''} ${!detailsText ? 'is-empty' : ''} ${(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy') ? 'is-hidden' : ''}`} style={(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy') ? { display: 'none' } : {}}>
+        <div className={`panel detail-rail ${currentView === 'dashboard' ? 'dashboard-rail' : ''} ${!detailsText ? 'is-empty' : ''} ${(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy' || currentView === 'complianceDrift') ? 'is-hidden' : ''}`} style={(currentView === 'graphQuery' || currentView === 'enrollmentFailures' || currentView === 'enrollmentPolicy' || currentView === 'complianceDrift') ? { display: 'none' } : {}}>
           <div className="font-semibold text-xl mb-2">Summary</div>
           <div className="text-sm mb-3" style={{ color: 'var(--text-muted)' }}>
             {currentView === 'ocr' ? 'OCR Assistant Answer' : detailsSummary}
@@ -4171,18 +4375,48 @@ export default function App() {
         <div className="confirm-overlay" onClick={() => setConfirmModal(m => ({ ...m, open: false }))}>
           <div className="confirm-modal" onClick={e => e.stopPropagation()}>
             <div className="confirm-icon">
-              {confirmModal.action?.includes('reset') ? '⚠️' : confirmModal.action?.includes('reboot') ? '⚡' : '🔄'}
+              {confirmModal.action === 'wipe' ? '🗑️'
+                : confirmModal.action === 'retire' ? '📤'
+                : confirmModal.action === 'rotateBitLockerKeys' ? '🔑'
+                : confirmModal.action === 'resetPasscode' ? '📱'
+                : confirmModal.action === 'collectDiagnostics' ? '📋'
+                : confirmModal.action?.includes('reset') ? '⚠️'
+                : confirmModal.action?.includes('reboot') ? '⚡' : '🔄'}
             </div>
             <div className="confirm-title">
               {confirmModal.action === 'sync' && 'Sync Device'}
               {confirmModal.action === 'reboot' && 'Reboot Device'}
               {confirmModal.action === 'autopilotReset' && 'Autopilot Reset'}
+              {confirmModal.action === 'retire' && 'Retire Device'}
+              {confirmModal.action === 'wipe' && 'Wipe Device'}
+              {confirmModal.action === 'rotateBitLockerKeys' && 'Rotate BitLocker Keys'}
+              {confirmModal.action === 'resetPasscode' && 'Reset Passcode'}
+              {confirmModal.action === 'collectDiagnostics' && 'Collect Diagnostics'}
               {confirmModal.action === 'bulk-sync' && `Sync ${confirmModal.count} Devices`}
               {confirmModal.action === 'bulk-reboot' && `Reboot ${confirmModal.count} Devices`}
               {confirmModal.action === 'bulk-reset' && `Reset ${confirmModal.count} Devices`}
             </div>
             <div className="confirm-body">
-              {confirmModal.action === 'autopilotReset' ? (
+              {confirmModal.action === 'wipe' ? (
+                <>
+                  <p>Are you sure you want to <strong>WIPE</strong> <span className="confirm-device-name">{confirmModal.deviceName}</span>?</p>
+                  <p className="confirm-warning">🗑️ This will factory reset the device. <strong>ALL user data will be permanently erased. This cannot be undone.</strong></p>
+                </>
+              ) : confirmModal.action === 'retire' ? (
+                <>
+                  <p>Retire <span className="confirm-device-name">{confirmModal.deviceName}</span> from Intune management?</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>The device will be unenrolled on next check-in. User data is preserved.</p>
+                </>
+              ) : confirmModal.action === 'rotateBitLockerKeys' ? (
+                <p>Rotate BitLocker recovery key for <span className="confirm-device-name">{confirmModal.deviceName}</span>? The new key will be stored in Entra ID.</p>
+              ) : confirmModal.action === 'resetPasscode' ? (
+                <>
+                  <p>Reset passcode on <span className="confirm-device-name">{confirmModal.deviceName}</span>?</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>The user will need to set a new PIN/passcode on next unlock.</p>
+                </>
+              ) : confirmModal.action === 'collectDiagnostics' ? (
+                <p>Start diagnostic log collection on <span className="confirm-device-name">{confirmModal.deviceName}</span>? Download the logs from the Intune portal when complete.</p>
+              ) : confirmModal.action === 'autopilotReset' ? (
                 <>
                   <p>Are you sure you want to <strong>Autopilot Reset</strong> <span className="confirm-device-name">{confirmModal.deviceName}</span>?</p>
                   <p className="confirm-warning">⚠️ This will wipe the device and re-run Autopilot provisioning. <strong>This action cannot be undone.</strong></p>
@@ -4205,11 +4439,16 @@ export default function App() {
             <div className="confirm-actions">
               <button className="btn btn-secondary" onClick={() => setConfirmModal(m => ({ ...m, open: false }))}>Cancel</button>
               <button
-                className={`btn ${confirmModal.action?.includes('reset') || confirmModal.action?.includes('reboot') ? 'btn-danger' : 'btn-primary'}`}
+                className={`btn ${['wipe','autopilotReset','bulk-reset'].includes(confirmModal.action ?? '') ? 'btn-danger' : 'btn-primary'}`}
                 onClick={executeAction}
               >
                 {confirmModal.action === 'sync' || confirmModal.action === 'bulk-sync' ? '🔄 Confirm Sync'
                   : confirmModal.action === 'reboot' || confirmModal.action === 'bulk-reboot' ? '⚡ Confirm Reboot'
+                  : confirmModal.action === 'wipe' ? '🗑️ Confirm Wipe'
+                  : confirmModal.action === 'retire' ? '📤 Confirm Retire'
+                  : confirmModal.action === 'rotateBitLockerKeys' ? '🔑 Rotate Keys'
+                  : confirmModal.action === 'resetPasscode' ? '📱 Reset Passcode'
+                  : confirmModal.action === 'collectDiagnostics' ? '📋 Start Collection'
                   : '♻️ Confirm Reset'}
               </button>
             </div>

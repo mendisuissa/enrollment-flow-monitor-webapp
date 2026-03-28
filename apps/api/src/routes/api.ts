@@ -492,14 +492,15 @@ function buildChecklist(data: Awaited<ReturnType<typeof getViewData>>, scenario:
 }
 
 
-async function graphPostAction(accessToken: string, path: string): Promise<void> {
+async function graphPostAction(accessToken: string, path: string, body?: string): Promise<void> {
   const response = await fetch(`https://graph.microsoft.com${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json',
       'Content-Type': 'application/json'
-    }
+    },
+    ...(body ? { body } : {})
   });
 
   if (response.ok || response.status === 204 || response.status === 202) return;
@@ -1097,6 +1098,109 @@ apiRouter.get('/graph/enrollment-policy', async (req, res) => {
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Enrollment policy fetch failed.';
+    return res.status(500).json({ message: msg });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/retire', async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId);
+    await assertKnownDeviceId(req, deviceId);
+    const token = requireWriteToken(req);
+    await graphPostAction(token, '/v1.0/deviceManagement/managedDevices/' + encodeURIComponent(deviceId) + '/retire');
+    return res.json({ success: true, message: 'Retire command sent. Device will unenroll on next check-in.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Retire failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/wipe', async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId);
+    await assertKnownDeviceId(req, deviceId);
+    const token = requireWriteToken(req);
+    const body = req.body?.keepEnrollmentData === true
+      ? JSON.stringify({ keepEnrollmentData: true, keepUserData: false })
+      : '{}';
+    await graphPostAction(token, '/v1.0/deviceManagement/managedDevices/' + encodeURIComponent(deviceId) + '/wipe', body);
+    return res.json({ success: true, message: 'Wipe command sent. Device will be factory reset on next check-in.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Wipe failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/collectDiagnostics', async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId);
+    await assertKnownDeviceId(req, deviceId);
+    const token = requireWriteToken(req);
+    await graphPostAction(token, '/beta/deviceManagement/managedDevices/' + encodeURIComponent(deviceId) + '/createDeviceLogCollectionRequest', JSON.stringify({ templateType: 'predefined' }));
+    return res.json({ success: true, message: 'Diagnostics collection started. Check Intune portal for download link.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Collect diagnostics failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/rotateBitLockerKeys', async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId);
+    await assertKnownDeviceId(req, deviceId);
+    const token = requireWriteToken(req);
+    await graphPostAction(token, '/beta/deviceManagement/managedDevices/' + encodeURIComponent(deviceId) + '/rotateBitLockerKeys');
+    return res.json({ success: true, message: 'BitLocker key rotation initiated.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'BitLocker key rotation failed.' });
+  }
+});
+
+apiRouter.post('/devices/:deviceId/resetPasscode', async (req, res) => {
+  try {
+    const deviceId = String(req.params.deviceId);
+    await assertKnownDeviceId(req, deviceId);
+    const token = requireWriteToken(req);
+    await graphPostAction(token, '/v1.0/deviceManagement/managedDevices/' + encodeURIComponent(deviceId) + '/resetPasscode');
+    return res.json({ success: true, message: 'Passcode reset sent. User will need to set a new passcode.' });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error?.message ?? 'Reset passcode failed.' });
+  }
+});
+
+apiRouter.get('/graph/compliance-drift', async (req, res) => {
+  try {
+    const token = req.session?.accessToken;
+    if (!token) return res.status(401).json({ message: 'Not authenticated.' });
+
+    const G = 'https://graph.microsoft.com';
+    const hdr = { Authorization: 'Bearer ' + token, Accept: 'application/json' };
+
+    // Fetch all managed devices compliance states
+    let allDevices: any[] = [];
+    let url: string | null = G + '/v1.0/deviceManagement/managedDevices?$select=id,complianceState&$top=999';
+    while (url) {
+      const r: any = await fetch(url, { headers: hdr });
+      if (!r.ok) break;
+      const data: any = await r.json();
+      allDevices = allDevices.concat(data.value ?? []);
+      url = data['@odata.nextLink'] ?? null;
+    }
+
+    const counts = { compliant: 0, noncompliant: 0, unknown: 0, total: allDevices.length };
+    allDevices.forEach((d: any) => {
+      if (d.complianceState === 'compliant') counts.compliant++;
+      else if (d.complianceState === 'noncompliant') counts.noncompliant++;
+      else counts.unknown++;
+    });
+
+    // Load existing snapshots from session, add new one
+    const existing: any[] = (req.session as any).driftSnapshots ?? [];
+    const snapshot = { timestamp: new Date().toISOString(), ...counts };
+    // Keep last 30 snapshots
+    const snapshots = [...existing, snapshot].slice(-30);
+    (req.session as any).driftSnapshots = snapshots;
+
+    return res.json({ snapshots, latest: snapshot });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Compliance drift fetch failed.';
     return res.status(500).json({ message: msg });
   }
 });
