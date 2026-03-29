@@ -3597,10 +3597,13 @@ export default function App() {
                         </div>
                         <div className="fix-card-summary">{toText(row['summary'])}</div>
                         <div className="fix-meta-grid fix-meta-grid--maturity">
-                          <div><span>Category</span><strong>{toText(row['normalizedCategory'])}</strong></div>
+                          <div><span>Category</span><strong style={{ wordBreak: 'break-word', fontSize: 11 }}>{toText(row['normalizedCategory'])}</strong></div>
                           <div><span>Confidence</span><strong>{Math.round(confidence * 100)}%</strong></div>
                           <div><span>Updated</span><strong>{formatRelativeTime(workflowUpdatedAt) || 'Unknown'}</strong><em>{formatDateTimeDisplay(workflowUpdatedAt)} {formatTimeDisplay(workflowUpdatedAt)}</em></div>
-                          <div><span>Signature</span><strong>{toText(row['signature'])}</strong></div>
+                          <div><span>Owner</span><strong>{toText(row['owner'] || 'Unassigned')}</strong></div>
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'monospace', marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.06em', marginRight: 6 }}>SIG</span>{toText(row['signature'])}
                         </div>
                         <div className="fix-next-action fix-next-action--maturity">
                           <span>Next best action</span>

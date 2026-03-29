@@ -3,6 +3,13 @@ const GRAPH_BASE = 'https://graph.microsoft.com';
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
+// Special error class for expired/invalid tokens — caught by view routes to return 401
+export class TokenExpiredError extends Error {
+    constructor() {
+        super('Session token expired. Please sign in again.');
+        this.name = 'TokenExpiredError';
+    }
+}
 export async function graphRequest(accessToken, path, maxRetries = 3) {
     let attempt = 0;
     let delay = 500;
@@ -15,6 +22,10 @@ export async function graphRequest(accessToken, path, maxRetries = 3) {
         });
         if (response.ok) {
             return await response.json();
+        }
+        // Token expired or invalid — throw special error so routes return 401
+        if (response.status === 401) {
+            throw new TokenExpiredError();
         }
         if ((response.status === 429 || response.status === 503) && attempt < maxRetries) {
             await sleep(delay);

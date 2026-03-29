@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { normalizeStatus } from '../engines/normalization.js';
 import { buildIncidents, buildEnrollmentIncidents } from '../engines/incidents.js';
 import { getDataBundle } from '../graph/provider.js';
+import { TokenExpiredError } from '../graph/graphClient.js';
 import { logger } from '../utils/logger.js';
 import { PrismaIncidentRepository } from '../storage/incidentRepository.js';
 import { prisma } from '../storage/prisma.js';
@@ -938,6 +939,11 @@ Last Sync: ${d.lastSyncDateTime}`
 
     return res.status(400).json({ message: `Unsupported view: ${req.params.view}` });
   } catch (error) {
+    // Token expired — clear session and return 401 so frontend auto-logs out
+    if (error instanceof Error && error.name === 'TokenExpiredError') {
+      req.session.destroy(() => {});
+      return res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
+    }
     const msg = error instanceof Error ? error.message : 'Failed to load view.';
     return res.status(500).json({ message: msg });
   }

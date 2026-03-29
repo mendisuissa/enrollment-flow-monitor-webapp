@@ -8,6 +8,21 @@ export const api = axios.create({
   withCredentials: true
 });
 
+// Auto-logout when token expires — redirect to login instead of showing 500
+api.interceptors.response.use(
+  response => response,
+  error => {
+    const status = error?.response?.status;
+    const expired = error?.response?.data?.expired;
+    if (status === 401 && expired) {
+      // Clear any local state and redirect to login
+      window.location.href = '/api/auth/login';
+      return new Promise(() => {}); // prevent error propagation
+    }
+    return Promise.reject(error);
+  }
+);
+
 export interface ViewResponse {
   rows: Record<string, unknown>[];
   message: string;

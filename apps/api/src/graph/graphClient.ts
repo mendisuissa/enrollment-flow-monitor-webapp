@@ -11,6 +11,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Special error class for expired/invalid tokens — caught by view routes to return 401
+export class TokenExpiredError extends Error {
+  constructor() {
+    super('Session token expired. Please sign in again.');
+    this.name = 'TokenExpiredError';
+  }
+}
+
 export async function graphRequest<T>(accessToken: string, path: string, maxRetries = 3): Promise<T> {
   let attempt = 0;
   let delay = 500;
@@ -25,6 +33,11 @@ export async function graphRequest<T>(accessToken: string, path: string, maxRetr
 
     if (response.ok) {
       return await response.json() as T;
+    }
+
+    // Token expired or invalid — throw special error so routes return 401
+    if (response.status === 401) {
+      throw new TokenExpiredError();
     }
 
     if ((response.status === 429 || response.status === 503) && attempt < maxRetries) {
