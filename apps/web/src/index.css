@@ -1595,10 +1595,10 @@ html, body {
 
 .incident-workflow-card {
   margin-top: 16px;
-  padding: 14px;
+  padding: 16px;
   border-radius: 16px;
-  background: color-mix(in srgb, var(--surface) 84%, var(--amber) 16%);
-  border: 1px solid var(--border);
+  background: var(--navy-light, #1E2D42);
+  border: 1px solid rgba(245,158,11,.2);
   display: grid;
   gap: 10px;
 }
@@ -1608,6 +1608,8 @@ html, body {
   align-items: center;
   justify-content: space-between;
   font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
 }
 
 .incident-workflow-badge {
@@ -1615,38 +1617,50 @@ html, body {
   align-items: center;
   border-radius: 999px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 700;
   background: rgba(245, 158, 11, 0.18);
   color: var(--amber);
   border: 1px solid rgba(245, 158, 11, 0.25);
 }
 
 .incident-workflow-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
 }
 
 .incident-workflow-input,
 .incident-workflow-notes {
   width: 100%;
-  border-radius: 12px;
+  border-radius: 10px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--navy, #0D1B2A);
   color: var(--text);
-  padding: 10px 12px;
-  font: inherit;
+  padding: 9px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.incident-workflow-input:focus,
+.incident-workflow-notes:focus {
+  border-color: rgba(245,158,11,.4);
 }
 
 .incident-workflow-notes {
-  min-height: 120px;
+  min-height: 100px;
   resize: vertical;
+  line-height: 1.5;
 }
 
 .incident-workflow-meta {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
   line-height: 1.5;
+  word-break: break-all;
 }
 
 .incident-workflow-meta span {
@@ -1656,6 +1670,7 @@ html, body {
 .incident-workflow-save {
   width: 100%;
   justify-content: center;
+  margin-top: 4px;
 }
 
 

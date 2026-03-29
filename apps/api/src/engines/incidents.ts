@@ -152,12 +152,12 @@ interface EnrollmentFailureRow {
 
 const CATEGORY_LABELS: Record<string, string> = {
   authentication: 'Authentication failure during enrollment',
-  deviceLimit: 'Device limit reached',
-  deviceNotSupported: 'Device type or platform not supported',
-  notLicensed: 'User not licensed for Intune',
-  userAbandonment: 'User abandoned enrollment flow',
-  accountValidation: 'Account validation failed',
-  aadTokenError: 'Azure AD token error',
+  devicelimit: 'Device limit reached',
+  devicenotsupported: 'Device type or platform not supported',
+  notlicensed: 'User not licensed for Intune',
+  userabandonment: 'User abandoned enrollment flow',
+  accountvalidation: 'Account validation failed',
+  aadtokenerror: 'Azure AD token error',
 };
 
 const CATEGORY_ACTIONS: Record<string, string[]> = {
@@ -166,32 +166,32 @@ const CATEGORY_ACTIONS: Record<string, string[]> = {
     'Review Conditional Access policies — ensure enrollment is not blocked by a new or modified policy.',
     'Verify MDM Terms of Use have been accepted by all affected users.',
   ],
-  deviceLimit: [
+  devicelimit: [
     'Go to Enrollment Restrictions → Device Limit and increase the per-user limit.',
     'Remove stale/duplicate device records from Entra ID for affected users.',
     'Check if users are in a group with a lower custom device limit override.',
   ],
-  deviceNotSupported: [
+  devicenotsupported: [
     'Go to Enrollment Restrictions → Device Type and ensure the platform is set to Allow.',
     'Check if the device manufacturer or model is on a blocked list.',
     'Verify the OS version meets the minimum requirement in restrictions.',
   ],
-  notLicensed: [
+  notlicensed: [
     'Assign an Intune or EMS E3/E5 license to affected users in Entra ID.',
     'Wait 15 minutes for license propagation, then retry enrollment.',
     'Verify license includes the Intune service plan (not just the bundle).',
   ],
-  userAbandonment: [
+  userabandonment: [
     'Follow up with affected users and ask them to retry enrollment.',
     'Verify Company Portal is up to date on the device.',
     'Check for blocking prompts the user may have dismissed (Terms of Use, MFA).',
   ],
-  accountValidation: [
+  accountvalidation: [
     'Verify the UPN is correct and the account exists in Entra ID.',
     'Check if the account is a guest/external user — these cannot enroll by default.',
     'Ensure the user is in scope for MDM enrollment in Entra ID → Mobility.',
   ],
-  aadTokenError: [
+  aadtokenerror: [
     'Ask affected users to sign out and sign back in with their work account.',
     'Check if MFA is enforced — users may need to complete MFA first.',
     'Review Entra ID Sign-in logs for the specific token failure reason.',
@@ -199,9 +199,9 @@ const CATEGORY_ACTIONS: Record<string, string[]> = {
 };
 
 function categoryToOwner(category: string): string {
-  if (['authentication', 'aadTokenError', 'accountValidation'].includes(category)) return 'Identity Team';
-  if (['deviceLimit', 'deviceNotSupported'].includes(category)) return 'Endpoint Team';
-  if (category === 'notLicensed') return 'IT Operations';
+  if (['authentication', 'aadtokenerror', 'accountvalidation'].includes(category)) return 'Identity Team';
+  if (['devicelimit', 'devicenotsupported'].includes(category)) return 'Endpoint Team';
+  if (category === 'notlicensed') return 'IT Operations';
   return 'Enrollment Operations';
 }
 
