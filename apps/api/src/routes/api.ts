@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import { DashboardData, DashboardAction, SettingsData, ViewName, ReportData, PlatformBreakdown, HealthScore, TopErrorEntry, ChecklistItem, ChecklistScenario, AppStatusRow, IncidentRow, IncidentWorkflowStatus } from '@efm/shared';
 import { config } from '../config.js';
 import { normalizeStatus } from '../engines/normalization.js';
-import { buildIncidents } from '../engines/incidents.js';
+import { buildIncidents, buildEnrollmentIncidents } from '../engines/incidents.js';
 import { getDataBundle } from '../graph/provider.js';
 import { logger } from '../utils/logger.js';
 import { PrismaIncidentRepository } from '../storage/incidentRepository.js';
@@ -863,9 +863,53 @@ Last Sync: ${d.lastSyncDateTime}`
     }
     if (view === 'incidents') {
       const mergedIncidents = await mergeIncidentWorkflows(data.incidents);
+
+      // Also fetch enrollment failures and build incidents from them
+      let enrollmentIncidents: any[] = [];
+      try {
+        const token = req.session?.accessToken;
+        if (token) {
+          const G = 'https://graph.microsoft.com';
+          const hdr = { Authorization: 'Bearer ' + token, Accept: 'application/json' };
+          const efRes = await fetch(G + '/v1.0/deviceManagement/troubleshootingEvents?$top=200&$orderby=eventDateTime desc', { headers: hdr });
+          if (efRes.ok) {
+            const efData: any = await efRes.json();
+            const items: any[] = (efData.value ?? []).filter((item: any) =>
+              item['@odata.type'] === '#microsoft.graph.enrollmentTroubleshootingEvent' ||
+              item.failureCategory !== undefined || item.enrollmentType !== undefined
+            );
+            const rows = items.map((item: any) => ({
+              failureDateTime: item.eventDateTime ?? null,
+              failureReason: item.failureReason ?? item.failureCategory ?? '—',
+              failureCategory: item.failureCategory ?? null,
+              os: item.operatingSystem ?? null,
+              osVersion: item.osVersion ?? null,
+              userPrincipalName: item.userPrincipalName ?? item.userId ?? null,
+              enrollmentMethod: item.enrollmentType ?? null,
+              deviceId: item.deviceId ?? item.managedDeviceIdentifier ?? null,
+              correlationId: item.correlationId ?? null,
+            }));
+            enrollmentIncidents = buildEnrollmentIncidents(rows, config.severityThresholds);
+          }
+        }
+      } catch (_) { /* silent — don't break Fix Queue if enrollment fetch fails */ }
+
+      // Merge: enrollment incidents first (more actionable), then device incidents
+      const allIncidents = [...enrollmentIncidents, ...mergedIncidents.filter(i => !i.isPlaceholder)];
+
+      // If both sources empty — return placeholder
+      if (allIncidents.length === 0) {
+        return res.json({
+          rows: mergedIncidents, // contains placeholder
+          message: 'No active incidents in current window.'
+        });
+      }
+
+      // Apply saved workflow states
+      const withWorkflow = await mergeIncidentWorkflows(allIncidents);
       return res.json({
-        rows: mergedIncidents,
-        message: mergedIncidents[0]?.isPlaceholder ? 'No active incidents in current window.' : 'Incidents loaded.'
+        rows: withWorkflow,
+        message: `${allIncidents.length} active incident${allIncidents.length !== 1 ? 's' : ''} loaded.`
       });
     }
     if (view === 'reports') {

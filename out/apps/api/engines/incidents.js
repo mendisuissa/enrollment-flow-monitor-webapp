@@ -134,4 +134,143 @@ export function buildIncidents(statusRows) {
     }
     return incidents;
 }
+const CATEGORY_LABELS = {
+    authentication: 'Authentication failure during enrollment',
+    deviceLimit: 'Device limit reached',
+    deviceNotSupported: 'Device type or platform not supported',
+    notLicensed: 'User not licensed for Intune',
+    userAbandonment: 'User abandoned enrollment flow',
+    accountValidation: 'Account validation failed',
+    aadTokenError: 'Azure AD token error',
+};
+const CATEGORY_ACTIONS = {
+    authentication: [
+        'Check Entra ID Sign-in logs for the affected users — filter by Intune app in the last 2 hours.',
+        'Review Conditional Access policies — ensure enrollment is not blocked by a new or modified policy.',
+        'Verify MDM Terms of Use have been accepted by all affected users.',
+    ],
+    deviceLimit: [
+        'Go to Enrollment Restrictions → Device Limit and increase the per-user limit.',
+        'Remove stale/duplicate device records from Entra ID for affected users.',
+        'Check if users are in a group with a lower custom device limit override.',
+    ],
+    deviceNotSupported: [
+        'Go to Enrollment Restrictions → Device Type and ensure the platform is set to Allow.',
+        'Check if the device manufacturer or model is on a blocked list.',
+        'Verify the OS version meets the minimum requirement in restrictions.',
+    ],
+    notLicensed: [
+        'Assign an Intune or EMS E3/E5 license to affected users in Entra ID.',
+        'Wait 15 minutes for license propagation, then retry enrollment.',
+        'Verify license includes the Intune service plan (not just the bundle).',
+    ],
+    userAbandonment: [
+        'Follow up with affected users and ask them to retry enrollment.',
+        'Verify Company Portal is up to date on the device.',
+        'Check for blocking prompts the user may have dismissed (Terms of Use, MFA).',
+    ],
+    accountValidation: [
+        'Verify the UPN is correct and the account exists in Entra ID.',
+        'Check if the account is a guest/external user — these cannot enroll by default.',
+        'Ensure the user is in scope for MDM enrollment in Entra ID → Mobility.',
+    ],
+    aadTokenError: [
+        'Ask affected users to sign out and sign back in with their work account.',
+        'Check if MFA is enforced — users may need to complete MFA first.',
+        'Review Entra ID Sign-in logs for the specific token failure reason.',
+    ],
+};
+function categoryToOwner(category) {
+    if (['authentication', 'aadTokenError', 'accountValidation'].includes(category))
+        return 'Identity Team';
+    if (['deviceLimit', 'deviceNotSupported'].includes(category))
+        return 'Endpoint Team';
+    if (category === 'notLicensed')
+        return 'IT Operations';
+    return 'Enrollment Operations';
+}
+export function buildEnrollmentIncidents(failures, thresholds) {
+    if (!failures || failures.length === 0)
+        return [];
+    const grouped = new Map();
+    for (const f of failures) {
+        const cat = (f.failureCategory ?? 'unknown').toLowerCase();
+        const os = (f.os ?? 'unknown').toLowerCase();
+        const key = `enrollment|${cat}|${os}`;
+        const existing = grouped.get(key) ?? [];
+        existing.push(f);
+        grouped.set(key, existing);
+    }
+    const incidents = [];
+    for (const [key, rows] of grouped.entries()) {
+        const parts = key.split('|');
+        const category = parts[1];
+        const os = parts[2];
+        const sorted = rows.slice().sort((a, b) => (a.failureDateTime ?? '').localeCompare(b.failureDateTime ?? ''));
+        const first = sorted[0];
+        const last = sorted[sorted.length - 1];
+        const count = rows.length;
+        const severity = count >= thresholds.High ? 'High' :
+            count >= thresholds.Medium ? 'Medium' :
+                count >= thresholds.Low ? 'Low' : 'Low';
+        const priority = severity === 'High' ? 'P1' :
+            severity === 'Medium' ? 'P2' : 'P3';
+        const label = CATEGORY_LABELS[category] ?? `Enrollment failure — ${category}`;
+        const actions = CATEGORY_ACTIONS[category] ?? [
+            'Review the enrollment failure details in Enrollment Failures view.',
+            'Check Intune service health for any ongoing outages.',
+        ];
+        const platformLabel = os.charAt(0).toUpperCase() + os.slice(1);
+        incidents.push({
+            id: key,
+            signature: key,
+            appId: 'enrollment',
+            appName: `Enrollment — ${platformLabel}`,
+            normalizedCategory: label,
+            errorCode: category,
+            impactedCount: count,
+            firstSeen: first.failureDateTime ?? new Date().toISOString(),
+            lastSeen: last.failureDateTime ?? new Date().toISOString(),
+            severity,
+            summary: `${count} ${platformLabel} enrollment failure${count !== 1 ? 's' : ''} — ${label}`,
+            priority,
+            nextBestAction: actions[0],
+            rootCauseConfidence: 0.85,
+            owner: categoryToOwner(category),
+            status: count >= thresholds.Medium ? 'Investigating' : 'New',
+            slaState: 'Healthy',
+            likelyCause: label,
+            remediationSteps: actions,
+            verificationSteps: [
+                'Refresh Enrollment Failures view and verify the failure count is decreasing.',
+                'Confirm a fresh enrollment succeeds for one of the affected users.',
+                'Check Intune audit logs to confirm the remediation action was applied.',
+            ],
+            details: [
+                `Incident: ${label}`,
+                `Platform: ${platformLabel}`,
+                `Category: ${category}`,
+                `Priority: ${priority}`,
+                `Severity: ${severity}`,
+                `Owner: ${categoryToOwner(category)}`,
+                `Status: ${count >= thresholds.Medium ? 'Investigating' : 'New'}`,
+                `Root cause confidence: 85%`,
+                `Likely cause: ${label}`,
+                `Next best action: ${actions[0]}`,
+                '',
+                'Remediation steps:',
+                ...actions.map((a, i) => `${i + 1}. ${a}`),
+                '',
+                'Verification steps:',
+                '1. Refresh Enrollment Failures view and verify the failure count is decreasing.',
+                '2. Confirm a fresh enrollment succeeds for one of the affected users.',
+                '3. Check Intune audit logs to confirm the remediation action was applied.',
+            ].join('\n'),
+        });
+    }
+    return incidents.sort((a, b) => {
+        const rank = { Critical: 4, High: 3, Medium: 2, Low: 1 };
+        return rank[b.severity] - rank[a.severity];
+    });
+}
 //# sourceMappingURL=incidents.js.map
