@@ -71,6 +71,24 @@ async function mergeIncidentWorkflows(rows) {
         };
     });
 }
+// ── Token expiry helper ───────────────────────────────────────────────────────
+function isTokenExpired(error) {
+    if (!(error instanceof Error))
+        return false;
+    const msg = error.message.toLowerCase();
+    return (error.name === 'TokenExpiredError' ||
+        msg.includes('(401)') ||
+        msg.includes('unauthorized') ||
+        msg.includes('invalidauthenticationtoken') ||
+        msg.includes('lifetime validation failed') ||
+        msg.includes('compacttoken') ||
+        msg.includes('token') && msg.includes('expired'));
+}
+function handleTokenExpiry(req, res) {
+    req.session?.destroy?.(() => { });
+    res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
+    return true;
+}
 function ensureConnected(req, res, next) {
     if (config.mockMode || req.session?.accessToken)
         return next();
@@ -863,8 +881,15 @@ Last Sync: ${d.lastSyncDateTime}`
         return res.status(400).json({ message: `Unsupported view: ${req.params.view}` });
     }
     catch (error) {
-        // Token expired — clear session and return 401 so frontend auto-logs out
-        if (error instanceof Error && error.name === 'TokenExpiredError') {
+        // Token expired or invalid — clear session and redirect to login
+        const isTokenError = (error instanceof Error && (error.name === 'TokenExpiredError' ||
+            error.message.includes('401') ||
+            error.message.toLowerCase().includes('token') ||
+            error.message.toLowerCase().includes('unauthorized') ||
+            error.message.toLowerCase().includes('invalidauthenticationtoken') ||
+            error.message.toLowerCase().includes('lifetime validation failed') ||
+            error.message.toLowerCase().includes('compacttoken')));
+        if (isTokenError) {
             req.session.destroy(() => { });
             return res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
         }
