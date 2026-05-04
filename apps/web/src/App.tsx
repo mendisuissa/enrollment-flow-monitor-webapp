@@ -3010,10 +3010,10 @@ export default function App() {
             <button className="btn-hamburger" onClick={() => setSidebarOpen(true)}>&#9776;</button>
           )}
           <div className="logo-pill">
-            <div className="logo-mark-sq">EF</div>
+            <img src="/efm-logo.svg" className="logo-img" alt="EFM" style={{ width: 34, height: 34 }} />
             <div className="logo-text">
-              <span className="logo-title">Modern Endpoint</span>
-              <span className="logo-sub">Enterprise Architecture Journal</span>
+              <span className="logo-title">Enrollment Flow</span>
+              <span className="logo-sub">Monitor</span>
             </div>
           </div>
           <div className="topbar-titles">

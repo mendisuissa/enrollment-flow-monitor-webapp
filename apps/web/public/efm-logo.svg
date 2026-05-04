@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56">
+  <defs>
+    <linearGradient id="cg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#D0D5DF"/>
+      <stop offset="40%"  stop-color="#F0F3F8"/>
+      <stop offset="70%"  stop-color="#C4CAD6"/>
+      <stop offset="100%" stop-color="#DDE1EB"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#2C2926"/>
+      <stop offset="100%" stop-color="#1C1917"/>
+    </linearGradient>
+    <filter id="sh">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="rgba(0,0,0,0.4)"/>
+    </filter>
+  </defs>
+  <rect width="56" height="56" rx="12" fill="url(#bg)"/>
+  <rect width="56" height="56" rx="12" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <!-- E: vertical + 3 horizontal bars -->
+  <rect x="9"  y="15"   width="4.5" height="26" rx="2" fill="url(#cg)" filter="url(#sh)"/>
+  <rect x="9"  y="15"   width="16"  height="4.5" rx="2" fill="url(#cg)"/>
+  <rect x="9"  y="25.75" width="12" height="4.5" rx="2" fill="url(#cg)"/>
+  <rect x="9"  y="36.5" width="16"  height="4.5" rx="2" fill="url(#cg)"/>
+  <!-- F: vertical + 2 horizontal bars -->
+  <rect x="30" y="15"   width="4.5" height="26" rx="2" fill="url(#cg)" filter="url(#sh)"/>
+  <rect x="30" y="15"   width="17"  height="4.5" rx="2" fill="url(#cg)"/>
+  <rect x="30" y="25.75" width="13" height="4.5" rx="2" fill="url(#cg)"/>
+  <!-- Chrome shimmer highlight at top -->
+  <rect x="2" y="2" width="52" height="1" rx="0.5" fill="rgba(255,255,255,0.12)"/>
+</svg>
