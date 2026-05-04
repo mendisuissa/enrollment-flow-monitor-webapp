@@ -2173,3 +2173,127 @@ button.kpi-card {
   .efm-wt-tab-label { display: none; }
 }
 /* ──────────────────────────────────────────────────────────────────────── */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CREAM MAIN CONTENT AREA — dark sidebar stays dark, content panel goes warm
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.panel:not(.sidebar) {
+  --text:        #1C1917;
+  --text-muted:  #57534E;
+  --text-dim:    #78716C;
+  --surface:     #FFFEFB;
+  --card:        #FFFEFB;
+  --bg:          #FAF8F5;
+  --bg-elevated: #FFFEFB;
+  --navy-mid:    #FFFEFB;
+  --navy-light:  #F4F1EC;
+  --navy-border: #E8E4DC;
+  --border:      #E8E4DC;
+  --shadow-sm:   0 1px 4px rgba(0,0,0,0.06);
+  --shadow-md:   0 4px 16px rgba(0,0,0,0.09);
+  background: #FAF8F5;
+  color: #1C1917;
+}
+
+/* Restore dark variables for all position:fixed overlays inside the cream panel */
+.panel:not(.sidebar) .search-overlay,
+.panel:not(.sidebar) .json-overlay,
+.panel:not(.sidebar) .graph-drawer-overlay,
+.panel:not(.sidebar) .tutorial-overlay,
+.panel:not(.sidebar) .sidebar-drawer-overlay {
+  --navy:        #1C1917;
+  --navy-mid:    #292524;
+  --navy-light:  #3C3835;
+  --navy-border: rgba(255,255,255,0.08);
+  --border:      rgba(255,255,255,0.08);
+  --text:        #F5F4F0;
+  --text-muted:  #A8A29E;
+  --text-dim:    #78716C;
+  --surface:     #292524;
+  --card:        #3C3835;
+  --bg:          #1C1917;
+  --bg-elevated: #292524;
+  --shadow-md:   0 8px 28px rgba(0,0,0,0.5);
+}
+
+/* Welcome / landing screen — cream radial */
+.panel:not(.sidebar) .welcome-screen {
+  background: radial-gradient(ellipse 70% 50% at 50% -10%, rgba(148,163,184,0.08) 0%, transparent 70%), #FAF8F5 !important;
+}
+
+/* Hero right panel → cream */
+.panel:not(.sidebar) .efm-hero-right {
+  background: #F4F1EC !important;
+  border-left-color: #E8E4DC !important;
+}
+
+/* Hero accent → chrome gradient text */
+.efm-hero-accent {
+  background: linear-gradient(135deg, #475569 0%, #94A3B8 35%, #CBD5E1 55%, #64748B 80%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Demo bar and walkthrough nav in cream context */
+.panel:not(.sidebar) .efm-demo-bar,
+.panel:not(.sidebar) .efm-wt-nav {
+  background: rgba(0,0,0,0.04);
+  border-top-color: #E8E4DC;
+}
+
+/* KPI cards in cream context */
+.panel:not(.sidebar) .kpi-card {
+  background: #FFFEFB;
+  border-color: #E8E4DC;
+  position: relative;
+  overflow: hidden;
+}
+.panel:not(.sidebar) .kpi-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(148,163,184,0.6) 50%, transparent);
+  pointer-events: none;
+}
+
+/* Fix hardcoded light-on-dark colors in cream context */
+.panel:not(.sidebar) .kpi-value { color: #1C1917; }
+.panel:not(.sidebar) .kpi-label { color: #57534E; }
+.panel:not(.sidebar) .kpi-indicator-red { color: #DC2626; background: rgba(220,38,38,0.08); }
+.panel:not(.sidebar) .kpi-indicator-green { color: #16A34A; background: rgba(22,163,74,0.08); }
+.panel:not(.sidebar) .kpi-indicator-amber { color: #D97706; background: rgba(217,119,6,0.10); }
+.panel:not(.sidebar) .kpi-value.red { color: #DC2626; }
+.panel:not(.sidebar) .kpi-value.green { color: #16A34A; }
+
+/* Table / log rows in cream context */
+.panel:not(.sidebar) .log-row:hover,
+.panel:not(.sidebar) tr:hover td { background: rgba(0,0,0,0.03); }
+.panel:not(.sidebar) .log-row.selected,
+.panel:not(.sidebar) tr.selected td { background: rgba(245,158,11,0.07); }
+
+/* Inputs and selects */
+.panel:not(.sidebar) input,
+.panel:not(.sidebar) select,
+.panel:not(.sidebar) textarea {
+  background: #FFFEFB;
+  border-color: #E8E4DC;
+  color: #1C1917;
+}
+.panel:not(.sidebar) input::placeholder { color: #A8A29E; }
+
+/* Cards / elevated surfaces */
+.panel:not(.sidebar) .card,
+.panel:not(.sidebar) .section-card,
+.panel:not(.sidebar) [class*="-card"] {
+  background: #FFFEFB;
+  border-color: #E8E4DC;
+}
+
+/* Scrollbar in cream context */
+.panel:not(.sidebar) ::-webkit-scrollbar-track { background: #F4F1EC; }
+.panel:not(.sidebar) ::-webkit-scrollbar-thumb { background: #C8C3BB; }
+.panel:not(.sidebar) ::-webkit-scrollbar-thumb:hover { background: #A8A39B; }
