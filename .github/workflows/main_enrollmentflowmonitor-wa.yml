@@ -70,6 +70,9 @@ jobs:
           prisma.$disconnect();
           NODE
 
+      - name: Prune dev dependencies before packaging
+        run: npm prune --omit=dev
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
@@ -82,7 +85,7 @@ jobs:
             apps/api/**
             packages/shared/**
             out/**
-            node_modules/.prisma/**
+            node_modules/**
             !.git/**
             !apps/web/**
 
@@ -99,9 +102,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
-
-      - name: Install production dependencies
-        run: npm ci --omit=dev
 
       - name: Validate required Azure secrets
         env:
