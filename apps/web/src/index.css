@@ -1301,6 +1301,10 @@ html, body {
   min-width: 232px;
   background: linear-gradient(180deg, rgba(13,27,42,0.98), rgba(17,31,49,0.96));
 }
+:root[data-theme='light'] .detail-rail {
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
 .detail-rail .text-xl { font-size: 16px; }
 .detail-rail .text-sm { font-size: 12px; line-height: 1.5; }
 .detail-rail pre {

@@ -2723,7 +2723,10 @@ export default function App() {
 
   // Global search + smart filters combined
   const filteredRows = useMemo(() => {
-    let result = rows;
+    const gqRows: any[] = currentView === 'graphQuery'
+      ? (gqResult?.value ?? (Array.isArray(gqResult?.rows) ? gqResult.rows : gqResult && !gqResult?.value ? [gqResult] : []))
+      : [];
+    let result = currentView === 'graphQuery' ? gqRows : rows;
     const q = (globalSearch || inlineSearch).toLowerCase().trim();
 
     if (q) {
@@ -2790,7 +2793,7 @@ export default function App() {
     }
 
     return result;
-  }, [rows, globalSearch, inlineSearch, activeFilters, currentView, isDeviceView]);
+  }, [rows, gqResult, globalSearch, inlineSearch, activeFilters, currentView, isDeviceView]);
 
   const visibleFilterChips = currentView === 'incidents' ? INCIDENT_FILTER_CHIPS : isDeviceView ? DEVICE_FILTER_CHIPS : [];
 
