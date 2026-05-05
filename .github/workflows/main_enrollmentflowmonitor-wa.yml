@@ -74,6 +74,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: node-app
+          retention-days: 1
           include-hidden-files: true
           path: |
             package.json
@@ -81,7 +82,7 @@ jobs:
             apps/api/**
             packages/shared/**
             out/**
-            node_modules/**
+            node_modules/.prisma/**
             !.git/**
             !apps/web/**
 
@@ -98,6 +99,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
+
+      - name: Install production dependencies
+        run: npm ci --omit=dev
 
       - name: Validate required Azure secrets
         env:
