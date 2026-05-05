@@ -2101,8 +2101,10 @@ export default function App() {
       setOcrStatusText('OCR: Success');
       setStatusMessage('OCR completed. Click Get Explanation.');
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
       setOcrStatusText('OCR: Failed (manual text needed)');
-      setStatusMessage(error instanceof Error ? error.message : 'OCR failed. Paste text manually.');
+      setStatusMessage(errMsg || 'OCR failed. Paste text manually.');
+      setOcrInputText(`[OCR Error — paste text manually]\n\n${errMsg}`);
     } finally {
       setOcrBusy(false);
     }
