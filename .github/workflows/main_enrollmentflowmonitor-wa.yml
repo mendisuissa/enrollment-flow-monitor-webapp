@@ -161,7 +161,7 @@ jobs:
 
     steps:
       - name: Wait for app to warm up
-        run: sleep 20
+        run: sleep 45
 
       - name: Smoke test — health endpoint
         run: |
