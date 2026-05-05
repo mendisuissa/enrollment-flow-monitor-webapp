@@ -2089,7 +2089,7 @@ export default function App() {
     setOcrBusy(true);
     setOcrStatusText('OCR: Running...');
     try {
-      const result = await recognize(ocrImageFile, 'eng');
+      const result = await recognize(ocrImageFile, 'eng', { workerPath: '/tesseract/worker.min.js', workerBlobURL: false });
       const extracted = (result.data.text ?? '').trim();
       if (!extracted) {
         setOcrStatusText('OCR: Completed, no text found');

@@ -44,7 +44,7 @@ function applySecurityHeaders(_req: express.Request, res: express.Response, next
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
         "font-src 'self' https://fonts.gstatic.com; " +
         "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.googletagmanager.com blob: https://cdn.jsdelivr.net; " +
-        "worker-src 'self' blob:; " +
+        "worker-src 'self' blob: https://cdn.jsdelivr.net; " +
         "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; " +
         "frame-ancestors 'none'; " +
         "base-uri 'self'; " +
