@@ -8,14 +8,12 @@ export const api = axios.create({
   withCredentials: true
 });
 
-// Auto-logout when token expires — redirect to login instead of showing 500
+// Redirect to login on any 401 — covers both token expiry and session loss (e.g. after server restart)
 api.interceptors.response.use(
   response => response,
   error => {
     const status = error?.response?.status;
-    const expired = error?.response?.data?.expired;
-    if (status === 401 && expired) {
-      // Clear any local state and redirect to login
+    if (status === 401) {
       window.location.href = '/api/auth/login';
       return new Promise(() => {}); // prevent error propagation
     }

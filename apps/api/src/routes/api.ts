@@ -110,7 +110,7 @@ function handleTokenExpiry(req: any, res: any): boolean {
 
 function ensureConnected(req: Request, res: Response, next: NextFunction): void {
   if (config.mockMode || req.session?.accessToken) return next();
-  res.status(401).json({ message: 'Not connected. Click Connect first.' });
+  res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
 }
 
 async function getViewData(accessToken?: string) {
@@ -647,17 +647,6 @@ apiRouter.get('/admin/signins', async (req, res) => {
 });
 
 apiRouter.use(ensureConnected);
-
-apiRouter.post('/ocr/explain', async (req, res) => {
-  const text = typeof req.body?.text === 'string' ? req.body.text : '';
-  if (!text.trim()) return res.status(400).json({ message: 'Missing OCR text.' });
-  try {
-    const explanation = await explainOcrText(text);
-    return res.json(explanation);
-  } catch (error: any) {
-    return res.status(500).json({ message: error?.message ?? 'OCR explanation failed.' });
-  }
-});
 
 apiRouter.post('/ocr/explain', async (req, res) => {
   const text = typeof req.body?.text === 'string' ? req.body.text : '';
