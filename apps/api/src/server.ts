@@ -10,6 +10,7 @@ import { logger, requestLogger } from './utils/logger.js';
 import { authRouter } from './auth/routes.js';
 import { apiRouter } from './routes/api.js';
 import { subscriptionRouter } from './routes/subscriptions.js';
+import { PrismaSessionStore } from './storage/sessionStore.js';
 
 const app = express();
 const isProduction = config.nodeEnv === 'production';
@@ -92,10 +93,12 @@ app.use(session({
   secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
+  store: new PrismaSessionStore(),
   cookie: {
     httpOnly: true,
     sameSite: isProduction ? 'none' : 'lax',
-    secure: isProduction
+    secure: isProduction,
+    maxAge: 24 * 60 * 60 * 1000   // 24 hours
   }
 }));
 
@@ -264,6 +267,15 @@ async function bootstrap() {
     `);
     await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_email_key" ON "Subscription"("email")`);
     await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_gumroadSaleId_key" ON "Subscription"("gumroadSaleId")`);
+    await db.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Session" (
+        "id"        TEXT     NOT NULL PRIMARY KEY,
+        "data"      TEXT     NOT NULL DEFAULT '{}',
+        "expiresAt" DATETIME NOT NULL,
+        "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Session_expiresAt_idx" ON "Session"("expiresAt")`);
     logger.info('DB tables verified.');
   } catch (err) {
     logger.warn({ err }, 'DB table verification failed — continuing');
