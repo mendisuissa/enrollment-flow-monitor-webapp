@@ -39,11 +39,12 @@ function applySecurityHeaders(_req: express.Request, res: express.Response, next
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; " +
-        "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://www.google-analytics.com https://region1.google-analytics.com; " +
+        "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://www.google-analytics.com https://region1.google-analytics.com https://tessdata.projectnaptha.com https://unpkg.com; " +
         "img-src 'self' data: https:; " +
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
         "font-src 'self' https://fonts.gstatic.com; " +
-        "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; " +
+        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.googletagmanager.com blob:; " +
+        "worker-src 'self' blob:; " +
         "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; " +
         "frame-ancestors 'none'; " +
         "base-uri 'self'; " +
