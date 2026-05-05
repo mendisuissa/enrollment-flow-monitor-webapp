@@ -648,6 +648,52 @@ apiRouter.get('/admin/signins', async (req, res) => {
 
 apiRouter.use(ensureConnected);
 
+apiRouter.get('/export', async (req, res) => {
+  try {
+    const view = String(req.query.view || '');
+    const format = String(req.query.format || 'json').toLowerCase();
+    const data = await getViewData((req as any).session?.accessToken);
+
+    let rows: Record<string, unknown>[];
+    if (view === 'windowsEnrollment') {
+      rows = buildWindowsEnrollmentGrid(data) as any;
+    } else if (view === 'linuxEnrollment') {
+      rows = buildLinuxEnrollmentGrid(data) as any;
+    } else if (view === 'mobileEnrollment') {
+      rows = data.devices.filter((d) => {
+        const os = (d.operatingSystem ?? '').toLowerCase();
+        return os.includes('ios') || os.includes('android') || os.includes('ipados');
+      }).map((d) => ({ id: d.id, deviceName: d.deviceName, operatingSystem: d.operatingSystem, osVersion: d.osVersion, complianceState: d.complianceState, lastSyncDateTime: d.lastSyncDateTime, userPrincipalName: d.userPrincipalName })) as any;
+    } else if (view === 'macEnrollment') {
+      rows = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('mac'))
+        .map((d) => ({ id: d.id, deviceName: d.deviceName, osVersion: d.osVersion, complianceState: d.complianceState, lastSyncDateTime: d.lastSyncDateTime, userPrincipalName: d.userPrincipalName, serialNumber: d.serialNumber })) as any;
+    } else {
+      // Fallback: export all devices
+      rows = data.devices.map((d) => ({ id: d.id, deviceName: d.deviceName, operatingSystem: d.operatingSystem, osVersion: d.osVersion, complianceState: d.complianceState, lastSyncDateTime: d.lastSyncDateTime, userPrincipalName: d.userPrincipalName })) as any;
+    }
+
+    const filename = `${view || 'export'}-${new Date().toISOString().slice(0, 10)}`;
+
+    if (format === 'csv') {
+      const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+      const escape = (v: unknown) => {
+        const s = v == null ? '' : String(v).replace(/\r?\n/g, ' ');
+        return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const csv = [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))].join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
+      res.send(csv);
+    } else {
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
+      res.json(rows);
+    }
+  } catch (error: any) {
+    if (handleTokenExpiry(req, res)) return;
+    res.status(500).json({ message: error?.message ?? 'Export failed.' });
+  }
+});
+
 apiRouter.post('/ocr/explain', async (req, res) => {
   const text = typeof req.body?.text === 'string' ? req.body.text : '';
   if (!text.trim()) return res.status(400).json({ message: 'Missing OCR text.' });
