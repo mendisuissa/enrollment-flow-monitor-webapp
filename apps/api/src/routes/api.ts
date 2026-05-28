@@ -843,6 +843,51 @@ apiRouter.get('/view/:view', async (req, res) => {
       });
     }
 
+    // ── Readiness Checklist — lightweight path (devices only, no app-status fetch) ──
+    if (view === 'readinessChecklist') {
+      const token = req.session?.accessToken;
+      if (!token) return res.status(401).json({ message: 'Not authenticated.' });
+      const scenario = (typeof req.query.scenario === 'string' ? req.query.scenario : 'autopilot') as ChecklistScenario;
+
+      // Fetch ONLY devices — one Graph call instead of N app-status calls
+      const devicesUrl = 'https://graph.microsoft.com/v1.0/deviceManagement/managedDevices' +
+        '?$top=200&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName';
+      const devRes = await fetch(devicesUrl, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      });
+      const devJson = devRes.ok ? await devRes.json().catch(() => ({ value: [] })) : { value: [] };
+      const devices = (devJson.value ?? []).map((d: any) => ({
+        id: d.id ?? '',
+        deviceName: d.deviceName ?? '',
+        operatingSystem: d.operatingSystem ?? '',
+        osVersion: d.osVersion ?? '',
+        complianceState: d.complianceState ?? 'unknown',
+        lastSyncDateTime: d.lastSyncDateTime ?? '',
+        userPrincipalName: d.userPrincipalName ?? '',
+        userDisplayName: '',
+        serialNumber: '',
+        joinType: '',
+        deviceEnrollmentType: ''
+      }));
+
+      // Use persisted incidents from DB (no Graph needed for checklist)
+      const dbIncidents = await incidentRepo.listWorkflows().catch(() => []);
+      const incidents = dbIncidents.map((w) => ({
+        isPlaceholder: false,
+        signature: w.signature,
+        impactedCount: 1,
+        severity: 'Low',
+        priority: 'P3',
+        normalizedCategory: '',
+        cause: ''
+      }));
+
+      return res.json({
+        rows: buildChecklist({ devices, incidents } as any, scenario),
+        message: `Readiness checklist for ${scenario} loaded.`
+      });
+    }
+
     const data = await getViewData(req.session.accessToken);
 
     if (view === 'dashboard') {
@@ -974,13 +1019,6 @@ Last Sync: ${d.lastSyncDateTime}`
       return res.json({
         rows: [buildReportData(data, req.session?.account?.username ?? '', req.session?.account?.tenantId ?? '')],
         message: 'Reports loaded.'
-      });
-    }
-    if (view === 'readinessChecklist') {
-      const scenario = (typeof req.query.scenario === 'string' ? req.query.scenario : 'autopilot') as ChecklistScenario;
-      return res.json({
-        rows: buildChecklist(data, scenario),
-        message: `Readiness checklist for ${scenario} loaded.`
       });
     }
     if (String(req.params.view) === 'auditLogs') {
