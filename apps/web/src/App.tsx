@@ -1838,6 +1838,318 @@ function EnrollmentPolicyView({ epData, epLoading, epError, api, setEpData, setE
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Landing Page — shown to unauthenticated visitors
+// ─────────────────────────────────────────────────────────────────────────────
+function LandingPage() {
+  const [hoveredFeature, setHoveredFeature] = useState<number | null>(null);
+
+  const features = [
+    {
+      icon: '🔍',
+      title: 'Instant Enrollment Diagnostics',
+      desc: 'Every enrollment failure decoded — error code, root cause, and step-by-step fix. Works across Windows, iOS, Android and macOS.',
+    },
+    {
+      icon: '📊',
+      title: 'Live Compliance Dashboard',
+      desc: 'See compliant vs. non-compliant devices across your entire fleet. Drill into any device to find what is blocking compliance.',
+    },
+    {
+      icon: '🤖',
+      title: 'OCR Error Scanner',
+      desc: 'Screenshot an error on any device. Upload it here and get instant AI-powered root-cause analysis and remediation steps.',
+    },
+    {
+      icon: '🛡️',
+      title: 'Autopilot Readiness Checker',
+      desc: 'Validate your tenant before rolling out Autopilot, ADE or Android Enterprise. Catch misconfigurations before they hit end-users.',
+    },
+    {
+      icon: '📋',
+      title: 'Incident Workflow Tracker',
+      desc: 'Track enrollment incidents with status, owner, and notes. Export reports to PDF, CSV or JSON for management visibility.',
+    },
+    {
+      icon: '⚡',
+      title: 'Remote Device Actions',
+      desc: 'Trigger sync, reboot or Autopilot reset directly from the dashboard — no switching to the Intune portal.',
+    },
+  ];
+
+  const stats = [
+    { value: '50+', label: 'Error codes decoded' },
+    { value: '4', label: 'Platforms supported' },
+    { value: '30 day', label: 'Free trial' },
+    { value: '0', label: 'Agents to install' },
+  ];
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(160deg, #1C1917 0%, #1a1612 50%, #1C1917 100%)',
+      color: '#F5F4F0',
+      fontFamily: 'Inter, system-ui, sans-serif',
+      overflowX: 'hidden',
+    }}>
+      <style>{`
+        @keyframes lp-fade-up { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes lp-pulse { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+        .lp-fade-1 { animation: lp-fade-up 0.6s ease both; }
+        .lp-fade-2 { animation: lp-fade-up 0.6s 0.12s ease both; }
+        .lp-fade-3 { animation: lp-fade-up 0.6s 0.24s ease both; }
+        .lp-fade-4 { animation: lp-fade-up 0.6s 0.36s ease both; }
+        .lp-cta-btn {
+          display: inline-flex; align-items: center; gap: 10px;
+          background: linear-gradient(135deg, #F59E0B, #D97706);
+          color: #1C1917; font-weight: 700; font-size: 15px;
+          padding: 14px 32px; border-radius: 10px; border: none;
+          cursor: pointer; text-decoration: none;
+          box-shadow: 0 4px 24px rgba(245,158,11,0.35);
+          transition: transform 0.15s, box-shadow 0.15s;
+        }
+        .lp-cta-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(245,158,11,0.5); }
+        .lp-cta-btn:active { transform: translateY(0); }
+        .lp-cta-secondary {
+          display: inline-flex; align-items: center; gap: 8px;
+          background: transparent; color: #94A3B8; font-size: 14px;
+          padding: 12px 24px; border-radius: 10px;
+          border: 1px solid rgba(148,163,184,0.25);
+          cursor: pointer; text-decoration: none;
+          transition: border-color 0.15s, color 0.15s;
+        }
+        .lp-cta-secondary:hover { border-color: rgba(148,163,184,0.5); color: #F5F4F0; }
+        .lp-feature-card {
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 12px; padding: 24px;
+          transition: border-color 0.2s, background 0.2s, transform 0.2s;
+          cursor: default;
+        }
+        .lp-feature-card:hover {
+          border-color: rgba(245,158,11,0.3);
+          background: rgba(245,158,11,0.04);
+          transform: translateY(-2px);
+        }
+        .lp-stat-card {
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 10px; padding: 20px 24px;
+          text-align: center;
+        }
+        @media (max-width: 640px) {
+          .lp-hero-btns { flex-direction: column !important; align-items: stretch !important; }
+          .lp-features-grid { grid-template-columns: 1fr !important; }
+          .lp-stats-grid { grid-template-columns: 1fr 1fr !important; }
+          .lp-hero-title { font-size: 28px !important; }
+        }
+      `}</style>
+
+      {/* ── TOP NAV ── */}
+      <nav style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '16px 32px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        background: 'rgba(28,25,23,0.9)', backdropFilter: 'blur(8px)',
+        position: 'sticky', top: 0, zIndex: 100,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img src="/efm-logo.svg" alt="EFM" style={{ width: 34, height: 34 }} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#F5F4F0', lineHeight: 1.2 }}>Enrollment Flow Monitor</div>
+            <div style={{ fontSize: 10, color: '#94A3B8', letterSpacing: '0.05em' }}>by modernendpoint.tech</div>
+          </div>
+        </div>
+        <a className="lp-cta-btn" href="/api/auth/login" style={{ padding: '8px 20px', fontSize: 13 }}>
+          Sign in with Microsoft
+        </a>
+      </nav>
+
+      {/* ── HERO ── */}
+      <section style={{ maxWidth: 900, margin: '0 auto', padding: '80px 32px 60px', textAlign: 'center' }}>
+        {/* Badge */}
+        <div className="lp-fade-1" style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)',
+          borderRadius: 99, padding: '5px 14px', marginBottom: 28,
+          fontSize: 12, fontWeight: 600, color: '#F59E0B', letterSpacing: '0.04em',
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F59E0B', animation: 'lp-pulse 2s infinite' }} />
+          FREE 30-DAY TRIAL — NO CREDIT CARD REQUIRED
+        </div>
+
+        {/* Headline */}
+        <h1 className="lp-fade-2 lp-hero-title" style={{
+          fontSize: 44, fontWeight: 800, lineHeight: 1.15,
+          margin: '0 0 20px',
+          background: 'linear-gradient(135deg, #F5F4F0 30%, #94A3B8 100%)',
+          WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+        }}>
+          Know exactly why your Intune<br />enrollments are failing
+        </h1>
+
+        {/* Subheadline */}
+        <p className="lp-fade-3" style={{
+          fontSize: 18, color: '#A8A29E', lineHeight: 1.7,
+          maxWidth: 620, margin: '0 auto 40px',
+        }}>
+          Real-time diagnostics, compliance monitoring and enrollment readiness checks
+          for Microsoft Intune — in one dashboard, no agents, no setup.
+        </p>
+
+        {/* CTAs */}
+        <div className="lp-fade-4 lp-hero-btns" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <a className="lp-cta-btn" href="/api/auth/login">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+              <path d="M11.4 2H2v9.4h9.4V2z" fill="#F25022"/>
+              <path d="M22 2h-9.4v9.4H22V2z" fill="#7FBA00"/>
+              <path d="M11.4 12.6H2V22h9.4v-9.4z" fill="#00A4EF"/>
+              <path d="M22 12.6h-9.4V22H22v-9.4z" fill="#FFB900"/>
+            </svg>
+            Start Free Trial — Sign in with Microsoft
+          </a>
+          <a className="lp-cta-secondary" href="https://www.youtube.com/watch?v=VoLX31W2kOI" target="_blank" rel="noopener noreferrer">
+            ▶ Watch 2-min demo
+          </a>
+        </div>
+
+        {/* Trust line */}
+        <div style={{ marginTop: 24, fontSize: 12, color: '#57534E', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, flexWrap: 'wrap' }}>
+          <span>🔒 Your data never leaves your tenant</span>
+          <span>·</span>
+          <span>✅ Microsoft OAuth2 — no passwords stored</span>
+          <span>·</span>
+          <span>🌍 Works with any Microsoft 365 tenant</span>
+        </div>
+      </section>
+
+      {/* ── STATS BAR ── */}
+      <section style={{ maxWidth: 860, margin: '0 auto 64px', padding: '0 32px' }}>
+        <div className="lp-stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+          {stats.map(s => (
+            <div key={s.label} className="lp-stat-card">
+              <div style={{ fontSize: 30, fontWeight: 800, color: '#F59E0B', lineHeight: 1.1 }}>{s.value}</div>
+              <div style={{ fontSize: 12, color: '#78716C', marginTop: 4 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── FEATURES ── */}
+      <section style={{ maxWidth: 960, margin: '0 auto 80px', padding: '0 32px' }}>
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <h2 style={{ fontSize: 26, fontWeight: 700, margin: '0 0 10px' }}>Everything you need to manage Intune enrollment</h2>
+          <p style={{ fontSize: 15, color: '#78716C', margin: 0 }}>Built by an IT admin, for IT admins — focused on the tools you actually need on incident day</p>
+        </div>
+        <div className="lp-features-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+          {features.map((f, i) => (
+            <div
+              key={f.title}
+              className="lp-feature-card"
+              onMouseEnter={() => setHoveredFeature(i)}
+              onMouseLeave={() => setHoveredFeature(null)}
+            >
+              <div style={{ fontSize: 28, marginBottom: 12, filter: hoveredFeature === i ? 'none' : 'grayscale(20%)' }}>{f.icon}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#F5F4F0', marginBottom: 8 }}>{f.title}</div>
+              <div style={{ fontSize: 13, color: '#78716C', lineHeight: 1.65 }}>{f.desc}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── HOW IT WORKS ── */}
+      <section style={{
+        maxWidth: 860, margin: '0 auto 80px', padding: '48px 32px',
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 16,
+      }}>
+        <h2 style={{ textAlign: 'center', fontSize: 22, fontWeight: 700, margin: '0 0 40px' }}>Up and running in 60 seconds</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 32, textAlign: 'center' }}>
+          {[
+            { step: '1', title: 'Sign in', desc: 'Click "Sign in with Microsoft" and authenticate with your M365 account. No extra permissions needed.' },
+            { step: '2', title: 'See your data', desc: 'Your Intune devices, enrollment failures and compliance status load instantly from your tenant.' },
+            { step: '3', title: 'Fix & export', desc: 'Drill into any issue, follow the guided remediation steps, and export reports for your team.' },
+          ].map(s => (
+            <div key={s.step} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: '50%',
+                background: 'linear-gradient(135deg, #F59E0B, #D97706)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 16, fontWeight: 800, color: '#1C1917', flexShrink: 0,
+              }}>{s.step}</div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{s.title}</div>
+              <div style={{ fontSize: 13, color: '#78716C', lineHeight: 1.65 }}>{s.desc}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── WHO IS IT FOR ── */}
+      <section style={{ maxWidth: 860, margin: '0 auto 80px', padding: '0 32px' }}>
+        <h2 style={{ textAlign: 'center', fontSize: 22, fontWeight: 700, margin: '0 0 32px' }}>Built for the people who live in Intune</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+          {[
+            { role: '🧑‍💻 IT Administrators', desc: 'Stop hunting through Intune portal tabs. Get one view of enrollment health, compliance and active failures.' },
+            { role: '🏢 MSPs & Managed Service Providers', desc: 'Manage multiple tenants from a unified dashboard. Spot issues before your clients call you.' },
+            { role: '🔧 Systems Engineers', desc: 'Deep-dive into Autopilot, ADE, Android Enterprise and SCEP certificate chains — all in one place.' },
+            { role: '📈 IT Managers', desc: 'Export executive reports, track incident resolution and demonstrate compliance posture to leadership.' },
+          ].map(r => (
+            <div key={r.role} className="lp-feature-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#F5F4F0' }}>{r.role}</div>
+              <div style={{ fontSize: 13, color: '#78716C', lineHeight: 1.65 }}>{r.desc}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── BOTTOM CTA ── */}
+      <section style={{
+        maxWidth: 700, margin: '0 auto 80px', padding: '64px 32px',
+        background: 'linear-gradient(135deg, rgba(245,158,11,0.08), rgba(245,158,11,0.03))',
+        border: '1px solid rgba(245,158,11,0.2)',
+        borderRadius: 20, textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#F59E0B', letterSpacing: '0.06em', marginBottom: 16 }}>GET STARTED TODAY</div>
+        <h2 style={{ fontSize: 28, fontWeight: 800, margin: '0 0 16px', lineHeight: 1.25 }}>
+          Start your free 30-day trial.<br />No credit card required.
+        </h2>
+        <p style={{ fontSize: 15, color: '#78716C', margin: '0 0 32px', lineHeight: 1.7 }}>
+          Sign in with your Microsoft 365 account and get instant access to every feature.
+          Upgrade to Pro to keep access after the trial.
+        </p>
+        <a className="lp-cta-btn" href="/api/auth/login" style={{ fontSize: 16, padding: '16px 36px' }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+            <path d="M11.4 2H2v9.4h9.4V2z" fill="#F25022"/>
+            <path d="M22 2h-9.4v9.4H22V2z" fill="#7FBA00"/>
+            <path d="M11.4 12.6H2V22h9.4v-9.4z" fill="#00A4EF"/>
+            <path d="M22 12.6h-9.4V22H22v-9.4z" fill="#FFB900"/>
+          </svg>
+          Sign in with Microsoft — it's free
+        </a>
+        <div style={{ marginTop: 20, fontSize: 12, color: '#57534E' }}>
+          Already subscribed? Sign in to restore your Pro access.
+        </div>
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer style={{
+        borderTop: '1px solid rgba(255,255,255,0.06)',
+        padding: '24px 32px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        flexWrap: 'wrap', gap: 12,
+        fontSize: 12, color: '#57534E',
+      }}>
+        <div>© 2025 modernendpoint.tech · Enrollment Flow Monitor</div>
+        <div style={{ display: 'flex', gap: 20 }}>
+          <a href="/api/auth/login" style={{ color: '#78716C', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#F5F4F0')} onMouseLeave={e => (e.currentTarget.style.color = '#78716C')}>Sign In</a>
+          <a href="https://moderne.gumroad.com/l/cynmjz" target="_blank" rel="noopener noreferrer" style={{ color: '#78716C', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#F5F4F0')} onMouseLeave={e => (e.currentTarget.style.color = '#78716C')}>Upgrade to Pro</a>
+          <a href="https://modernendpoint.tech" target="_blank" rel="noopener noreferrer" style={{ color: '#78716C', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#F5F4F0')} onMouseLeave={e => (e.currentTarget.style.color = '#78716C')}>Website</a>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -1848,6 +2160,7 @@ export default function App() {
   const [detailsSummary, setDetailsSummary] = useState('Select a row to view details.');
   const [detailsText, setDetailsText] = useState('');
   const [auth, setAuth] = useState({ connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false });
+  const [authChecked, setAuthChecked] = useState(false);
   const [trialBannerDismissed, setTrialBannerDismissed] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const isTrialExpired = auth.connected && !isSubscribed && getTrialDaysLeft(auth.upn) === 0;
@@ -1963,10 +2276,12 @@ export default function App() {
           setIsSubscribed(false);
         }
       }
+      setAuthChecked(true);
       return result;
     } catch {
       const fallback = { connected: false, upn: '', tenantId: '', displayName: '', hasWritePermissions: false };
       setAuth(fallback);
+      setAuthChecked(true);
       return fallback;
     }
   }
@@ -3009,6 +3324,24 @@ export default function App() {
       console.error('PDF generation error:', err);
       toast('error', 'PDF generation failed — check console');
     }
+  }
+
+  // ── Landing page (shown to unauthenticated visitors) ───────────────────────
+  if (authChecked && !auth.connected) {
+    return <LandingPage />;
+  }
+
+  // ── Loading splash (auth check in flight) ────────────────────────────────
+  if (!authChecked) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#1C1917' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+          <img src="/efm-logo.svg" alt="EFM" style={{ width: 48, height: 48, opacity: 0.85 }} />
+          <div style={{ width: 32, height: 32, border: '3px solid rgba(245,158,11,0.3)', borderTopColor: '#F59E0B', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
   }
 
   return (
