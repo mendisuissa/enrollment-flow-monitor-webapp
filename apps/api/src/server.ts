@@ -137,6 +137,10 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, mockMode: config.mockMode, now: new Date().toISOString() });
 });
 
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, mockMode: config.mockMode, now: new Date().toISOString() });
+});
+
 // ── Internal health — M2M auth via KERNEL_API_SECRET ──────────────────────────
 app.get('/api/internal/health', (req, res) => {
   const expected = process.env.KERNEL_API_SECRET;
