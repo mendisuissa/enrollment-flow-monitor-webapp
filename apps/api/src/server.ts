@@ -137,6 +137,16 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, mockMode: config.mockMode, now: new Date().toISOString() });
 });
 
+// ── Internal health — M2M auth via KERNEL_API_SECRET ──────────────────────────
+app.get('/api/internal/health', (req, res) => {
+  const expected = process.env.KERNEL_API_SECRET;
+  if (!expected) return void res.status(503).json({ ok: false, error: 'Internal API not configured.' });
+  const header = String(req.headers['authorization'] || '');
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (!token || token !== expected) return void res.status(401).json({ ok: false, error: 'Unauthorized.' });
+  res.json({ ok: true, service: 'enrollment-api', uptime: Math.floor(process.uptime()), mockMode: config.mockMode, timestamp: new Date().toISOString() });
+});
+
 app.get('/api/diag', devOnly, (req, res) => {
   const requestHost = req.get('host') ?? '';
   const requestProtocol = req.get('x-forwarded-proto') ?? req.protocol;
