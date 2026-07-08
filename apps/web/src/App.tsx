@@ -3,6 +3,7 @@ import type { IncidentWorkflowRecord, IncidentWorkflowStatus, ViewName } from '@
 type ExtendedViewName = ViewName | 'auditLogs' | 'privacy' | 'home' | 'adminDashboard' | 'graphQuery' | 'enrollmentFailures' | 'enrollmentPolicy' | 'complianceDrift';
 import { api, copyRunbook, getAuthStatus, getLogs, getView, refreshData, deviceSync, deviceReboot, deviceAutopilotReset, deviceBulkAction, deviceRetire, deviceWipe, deviceCollectDiagnostics, deviceRotateBitLockerKeys, deviceResetPasscode, getExportUrl, getIncidentWorkflows, saveIncidentWorkflow } from './api/client.js';
 import { recognize } from 'tesseract.js';
+import SupervisorWidget from './SupervisorWidget.js';
 
 type Row = Record<string, unknown>;
 type ThemePreference = 'system' | 'light' | 'dark';
@@ -3346,6 +3347,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <div style={{ padding: '4px 12px 0' }}><SupervisorWidget /></div>
       <div className="surface topbar">
         <div className="topbar-left">
           {isMobile && (
