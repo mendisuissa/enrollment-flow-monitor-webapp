@@ -1,16 +1,34 @@
 import { useEffect, useState } from 'react';
 
+const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || 'mendi20018@gmail.com')
+  .split(',').map((e: string) => e.trim().toLowerCase());
+
+function getSessionEmail(): string | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i) || '';
+      if (!key.includes('login.windows') && !key.includes('login.microsoftonline')) continue;
+      const val = JSON.parse(localStorage.getItem(key) || '{}');
+      const email = val.username || val.preferred_username || val.upn || '';
+      if (email) return email.toLowerCase();
+    }
+  } catch {}
+  return null;
+}
+
 export default function SupervisorWidget() {
   const [data, setData] = useState<any>(null);
+  const isAdmin = ADMIN_EMAILS.includes(getSessionEmail() || '');
 
   useEffect(() => {
+    if (!isAdmin) return;
     fetch('/api/supervisor/status', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setData(d); })
       .catch(() => {});
   }, []);
 
-  if (!data) return null;
+  if (!isAdmin || !data) return null;
 
   const { summary = {}, lastCheck, running } = data;
   const stuckCount = summary.stuckMissions ?? 0;
