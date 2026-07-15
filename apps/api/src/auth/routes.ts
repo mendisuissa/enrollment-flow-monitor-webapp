@@ -252,7 +252,6 @@ authRouter.get('/callback', async (req: any, res) => {
 });
 
 authRouter.post('/logout', (req: any, res) => {
-  req.session?.destroy(() => {
-    res.json({ ok: true });
-  });
+  if (!req.session) return res.json({ ok: true });
+  req.session.destroy(() => res.json({ ok: true }));
 });

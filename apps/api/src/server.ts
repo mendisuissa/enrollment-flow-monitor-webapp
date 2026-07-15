@@ -311,4 +311,4 @@ async function bootstrap() {
   });
 }
 
-bootstrap();
+bootstrap().catch((err) => { logger.error({ err }, 'Fatal startup error'); process.exit(1); });

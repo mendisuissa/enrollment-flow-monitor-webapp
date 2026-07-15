@@ -102,9 +102,19 @@ function isTokenExpired(error: unknown): boolean {
 }
 
 function handleTokenExpiry(req: any, res: any): boolean {
+  if (!isTokenExpired({ message: 'token expired' } as any)) return false;
   req.session?.destroy?.(() => {});
   res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
   return true;
+}
+
+function handleError(req: any, res: any, error: any, fallbackMsg: string): void {
+  if (isTokenExpired(error)) {
+    req.session?.destroy?.(() => {});
+    res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
+  } else {
+    res.status(500).json({ message: error?.message ?? fallbackMsg });
+  }
 }
 
 
@@ -689,8 +699,7 @@ apiRouter.get('/export', async (req, res) => {
       res.json(rows);
     }
   } catch (error: any) {
-    if (handleTokenExpiry(req, res)) return;
-    res.status(500).json({ message: error?.message ?? 'Export failed.' });
+    handleError(req, res, error, 'Export failed.');
   }
 });
 
