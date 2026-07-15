@@ -138,7 +138,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'enrollment-api', version: process.env.npm_package_version || require('../../package.json').version, mockMode: config.mockMode, now: new Date().toISOString() });
+  res.json({ ok: true, service: 'enrollment-api', version: process.env.npm_package_version || process.env.APP_VERSION || '1.0.0', mockMode: config.mockMode, now: new Date().toISOString() });
 });
 
 // ── Internal health — M2M auth via KERNEL_API_SECRET ──────────────────────────
