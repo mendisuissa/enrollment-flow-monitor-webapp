@@ -144,6 +144,27 @@ jobs:
             az webapp config appsettings set --name "$APP_NAME" --resource-group "$RG" --settings WEBSITE_NODE_DEFAULT_VERSION=~22
           fi
 
+      - name: Wait for App Service to stabilize after config change
+        # az webapp config appsettings set / config set (previous step) both
+        # trigger an implicit site restart. OneDeploy immediately after that
+        # was racing the restart and failing with Conflict (409) — seen 3
+        # times in a row on 2026-08-04, including one attempt that hung 8+
+        # minutes before conflicting. Poll /health until the site is back
+        # before handing off to the deploy action, instead of assuming the
+        # restart already finished.
+        run: |
+          echo "Waiting for $APP_URL to respond after config change..."
+          for i in $(seq 1 20); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$APP_URL/health" || echo "000")
+            echo "Attempt $i: HTTP $STATUS"
+            if [ "$STATUS" = "200" ] || [ "$STATUS" = "204" ]; then
+              echo "App is responsive — proceeding to deploy."
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "App did not become responsive in time — proceeding anyway (deploy step has its own retry behavior)."
+
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
