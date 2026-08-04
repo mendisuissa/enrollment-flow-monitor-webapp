@@ -10,6 +10,7 @@ import { logger, requestLogger } from './utils/logger.js';
 import { authRouter } from './auth/routes.js';
 import { apiRouter } from './routes/api.js';
 import { subscriptionRouter } from './routes/subscriptions.js';
+import { PrismaSessionStore } from './storage/sessionStore.js';
 const app = express();
 const isProduction = config.nodeEnv === 'production';
 const currentFilePath = fileURLToPath(import.meta.url);
@@ -32,11 +33,12 @@ function applySecurityHeaders(_req, res, next) {
     if (config.nodeEnv === 'production') {
         res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
         res.setHeader('Content-Security-Policy', "default-src 'self'; " +
-            "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://www.google-analytics.com https://region1.google-analytics.com; " +
+            "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://www.google-analytics.com https://region1.google-analytics.com https://cdn.jsdelivr.net; " +
             "img-src 'self' data: https:; " +
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
             "font-src 'self' https://fonts.gstatic.com; " +
-            "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; " +
+            "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.googletagmanager.com blob: https://cdn.jsdelivr.net; " +
+            "worker-src 'self' blob: https://cdn.jsdelivr.net; " +
             "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; " +
             "frame-ancestors 'none'; " +
             "base-uri 'self'; " +
@@ -83,10 +85,12 @@ app.use(session({
     secret: config.sessionSecret,
     resave: false,
     saveUninitialized: false,
+    store: new PrismaSessionStore(),
     cookie: {
         httpOnly: true,
         sameSite: isProduction ? 'none' : 'lax',
-        secure: isProduction
+        secure: isProduction,
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
 }));
 if (isProduction) {
@@ -118,6 +122,33 @@ app.get('/', (_req, res) => {
 });
 app.get('/health', (_req, res) => {
     res.json({ ok: true, mockMode: config.mockMode, now: new Date().toISOString() });
+});
+app.get('/api/health', (_req, res) => {
+    res.json({ ok: true, service: 'enrollment-api', version: process.env.npm_package_version || process.env.APP_VERSION || '1.0.0', mockMode: config.mockMode, now: new Date().toISOString() });
+});
+// ── Internal health — M2M auth via KERNEL_API_SECRET ──────────────────────────
+app.get('/api/internal/health', (req, res) => {
+    const expected = process.env.KERNEL_API_SECRET;
+    if (!expected)
+        return void res.status(503).json({ ok: false, error: 'Internal API not configured.' });
+    const header = String(req.headers['authorization'] || '');
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    if (!token || token !== expected)
+        return void res.status(401).json({ ok: false, error: 'Unauthorized.' });
+    res.json({ ok: true, service: 'enrollment-api', uptime: Math.floor(process.uptime()), mockMode: config.mockMode, timestamp: new Date().toISOString() });
+});
+app.get('/api/supervisor/status', async (req, res) => {
+    const relayUrl = process.env.CLOUD_RELAY_URL;
+    const relayToken = process.env.KERNEL_API_SECRET;
+    if (!relayUrl || !relayToken)
+        return void res.json({ ok: false, error: 'Not configured', recentRuns: [], summary: {} });
+    try {
+        const r = await fetch(`${relayUrl}/api/supervisor/status`, { headers: { Authorization: `Bearer ${relayToken}` }, signal: AbortSignal.timeout(8000) });
+        res.json(r.ok ? await r.json() : { ok: false, error: `Relay ${r.status}`, recentRuns: [], summary: {} });
+    }
+    catch (e) {
+        res.json({ ok: false, error: e.message, recentRuns: [], summary: {} });
+    }
 });
 app.get('/api/diag', devOnly, (req, res) => {
     const requestHost = req.get('host') ?? '';
@@ -247,6 +278,15 @@ async function bootstrap() {
     `);
         await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_email_key" ON "Subscription"("email")`);
         await db.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Subscription_gumroadSaleId_key" ON "Subscription"("gumroadSaleId")`);
+        await db.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "Session" (
+        "id"        TEXT     NOT NULL PRIMARY KEY,
+        "data"      TEXT     NOT NULL DEFAULT '{}',
+        "expiresAt" DATETIME NOT NULL,
+        "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Session_expiresAt_idx" ON "Session"("expiresAt")`);
         logger.info('DB tables verified.');
     }
     catch (err) {
@@ -256,5 +296,5 @@ async function bootstrap() {
         logger.info(`API listening on port ${config.port}`);
     });
 }
-bootstrap();
+bootstrap().catch((err) => { logger.error({ err }, 'Fatal startup error'); process.exit(1); });
 //# sourceMappingURL=server.js.map

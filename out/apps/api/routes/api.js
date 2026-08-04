@@ -85,14 +85,30 @@ function isTokenExpired(error) {
         msg.includes('token') && msg.includes('expired'));
 }
 function handleTokenExpiry(req, res) {
+    if (!isTokenExpired({ message: 'token expired' }))
+        return false;
     req.session?.destroy?.(() => { });
     res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
     return true;
 }
+function handleError(req, res, error, fallbackMsg) {
+    if (isTokenExpired(error)) {
+        req.session?.destroy?.(() => { });
+        res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
+    }
+    else {
+        res.status(500).json({ message: error?.message ?? fallbackMsg });
+    }
+}
 function ensureConnected(req, res, next) {
-    if (config.mockMode || req.session?.accessToken)
+    const session = req.session;
+    // QA test sessions (see auth/qa-login) have no accessToken by design —
+    // getDataBundle() already falls back to fixture data when accessToken is
+    // undefined, so this is the same code path mockMode uses, just scoped to
+    // requests that presented a verified QA token instead of a global flag.
+    if (config.mockMode || session?.accessToken || session?.isQaTestSession)
         return next();
-    res.status(401).json({ message: 'Not connected. Click Connect first.' });
+    res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
 }
 async function getViewData(accessToken) {
     const bundle = await getDataBundle(accessToken);
@@ -574,16 +590,51 @@ apiRouter.get('/admin/signins', async (req, res) => {
     }
 });
 apiRouter.use(ensureConnected);
-apiRouter.post('/ocr/explain', async (req, res) => {
-    const text = typeof req.body?.text === 'string' ? req.body.text : '';
-    if (!text.trim())
-        return res.status(400).json({ message: 'Missing OCR text.' });
+apiRouter.get('/export', async (req, res) => {
     try {
-        const explanation = await explainOcrText(text);
-        return res.json(explanation);
+        const view = String(req.query.view || '');
+        const format = String(req.query.format || 'json').toLowerCase();
+        const data = await getViewData(req.session?.accessToken);
+        let rows;
+        if (view === 'windowsEnrollment') {
+            rows = buildWindowsEnrollmentGrid(data);
+        }
+        else if (view === 'linuxEnrollment') {
+            rows = buildLinuxEnrollmentGrid(data);
+        }
+        else if (view === 'mobileEnrollment') {
+            rows = data.devices.filter((d) => {
+                const os = (d.operatingSystem ?? '').toLowerCase();
+                return os.includes('ios') || os.includes('android') || os.includes('ipados');
+            }).map((d) => ({ id: d.id, deviceName: d.deviceName, operatingSystem: d.operatingSystem, osVersion: d.osVersion, complianceState: d.complianceState, lastSyncDateTime: d.lastSyncDateTime, userPrincipalName: d.userPrincipalName }));
+        }
+        else if (view === 'macEnrollment') {
+            rows = data.devices.filter((d) => (d.operatingSystem ?? '').toLowerCase().includes('mac'))
+                .map((d) => ({ id: d.id, deviceName: d.deviceName, osVersion: d.osVersion, complianceState: d.complianceState, lastSyncDateTime: d.lastSyncDateTime, userPrincipalName: d.userPrincipalName, serialNumber: d.serialNumber }));
+        }
+        else {
+            // Fallback: export all devices
+            rows = data.devices.map((d) => ({ id: d.id, deviceName: d.deviceName, operatingSystem: d.operatingSystem, osVersion: d.osVersion, complianceState: d.complianceState, lastSyncDateTime: d.lastSyncDateTime, userPrincipalName: d.userPrincipalName }));
+        }
+        const filename = `${view || 'export'}-${new Date().toISOString().slice(0, 10)}`;
+        if (format === 'csv') {
+            const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+            const escape = (v) => {
+                const s = v == null ? '' : String(v).replace(/\r?\n/g, ' ');
+                return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s;
+            };
+            const csv = [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))].join('\n');
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
+            res.send(csv);
+        }
+        else {
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
+            res.json(rows);
+        }
     }
     catch (error) {
-        return res.status(500).json({ message: error?.message ?? 'OCR explanation failed.' });
+        handleError(req, res, error, 'Export failed.');
     }
 });
 apiRouter.post('/ocr/explain', async (req, res) => {
@@ -735,6 +786,48 @@ apiRouter.get('/view/:view', async (req, res) => {
                 message: 'Enrollment Error Catalog loaded.'
             });
         }
+        // ── Readiness Checklist — lightweight path (devices only, no app-status fetch) ──
+        if (view === 'readinessChecklist') {
+            const token = req.session?.accessToken;
+            if (!token)
+                return res.status(401).json({ message: 'Not authenticated.' });
+            const scenario = (typeof req.query.scenario === 'string' ? req.query.scenario : 'autopilot');
+            // Fetch ONLY devices — one Graph call instead of N app-status calls
+            const devicesUrl = 'https://graph.microsoft.com/v1.0/deviceManagement/managedDevices' +
+                '?$top=200&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName';
+            const devRes = await fetch(devicesUrl, {
+                headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+            });
+            const devJson = devRes.ok ? await devRes.json().catch(() => ({ value: [] })) : { value: [] };
+            const devices = (devJson.value ?? []).map((d) => ({
+                id: d.id ?? '',
+                deviceName: d.deviceName ?? '',
+                operatingSystem: d.operatingSystem ?? '',
+                osVersion: d.osVersion ?? '',
+                complianceState: d.complianceState ?? 'unknown',
+                lastSyncDateTime: d.lastSyncDateTime ?? '',
+                userPrincipalName: d.userPrincipalName ?? '',
+                userDisplayName: '',
+                serialNumber: '',
+                joinType: '',
+                deviceEnrollmentType: ''
+            }));
+            // Use persisted incidents from DB (no Graph needed for checklist)
+            const dbIncidents = await incidentRepo.listWorkflows().catch(() => []);
+            const incidents = dbIncidents.map((w) => ({
+                isPlaceholder: false,
+                signature: w.signature,
+                impactedCount: 1,
+                severity: 'Low',
+                priority: 'P3',
+                normalizedCategory: '',
+                cause: ''
+            }));
+            return res.json({
+                rows: buildChecklist({ devices, incidents }, scenario),
+                message: `Readiness checklist for ${scenario} loaded.`
+            });
+        }
         const data = await getViewData(req.session.accessToken);
         if (view === 'dashboard') {
             const message = data.diagnostics?.devicesAvailable === false
@@ -859,13 +952,6 @@ Last Sync: ${d.lastSyncDateTime}`
             return res.json({
                 rows: [buildReportData(data, req.session?.account?.username ?? '', req.session?.account?.tenantId ?? '')],
                 message: 'Reports loaded.'
-            });
-        }
-        if (view === 'readinessChecklist') {
-            const scenario = (typeof req.query.scenario === 'string' ? req.query.scenario : 'autopilot');
-            return res.json({
-                rows: buildChecklist(data, scenario),
-                message: `Readiness checklist for ${scenario} loaded.`
             });
         }
         if (String(req.params.view) === 'auditLogs') {

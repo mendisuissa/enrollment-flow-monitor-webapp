@@ -23,5 +23,9 @@ export declare const config: {
         scopes: string[];
         scopesWrite: string[];
     };
+    qaLogin: {
+        clientId: string;
+        tenantId: string;
+    };
 };
 export declare function authConfigured(): boolean;

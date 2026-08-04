@@ -8,6 +8,7 @@ declare module 'express-session' {
     authRedirectUri?: string;
     authReturnUrl?: string;
     authElevated?: boolean;        // flag: current login flow is elevated
+    isQaTestSession?: boolean;     // set by POST /api/auth/qa-login — see auth/qaAuth.ts
     account?: {
       username?: string;
       tenantId?: string;

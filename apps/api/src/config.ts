@@ -62,6 +62,16 @@ export const config = {
     scopes: READ_SCOPES,
     // Write/privileged scopes for elevated login
     scopesWrite: WRITE_SCOPES
+  },
+  // Dedicated QA app registration used only by the automated QA bot to reach
+  // /enroll without a real interactive Microsoft sign-in. The bot presents a
+  // client-credentials token; /api/auth/qa-login accepts it only if it was
+  // signed by this exact tenant AND issued to this exact app id (see
+  // auth/qaAuth.ts) — a client-credentials token from any other app,
+  // including a real user's own token, is rejected.
+  qaLogin: {
+    clientId: process.env.QA_ENROLLMENT_CLIENT_ID ?? '',
+    tenantId: process.env.QA_ENROLLMENT_TENANT_ID || process.env.ENTRA_TENANT_ID || ''
   }
 };
 

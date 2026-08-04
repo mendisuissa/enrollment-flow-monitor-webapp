@@ -119,7 +119,12 @@ function handleError(req: any, res: any, error: any, fallbackMsg: string): void 
 
 
 function ensureConnected(req: Request, res: Response, next: NextFunction): void {
-  if (config.mockMode || req.session?.accessToken) return next();
+  const session = req.session as any;
+  // QA test sessions (see auth/qa-login) have no accessToken by design —
+  // getDataBundle() already falls back to fixture data when accessToken is
+  // undefined, so this is the same code path mockMode uses, just scoped to
+  // requests that presented a verified QA token instead of a global flag.
+  if (config.mockMode || session?.accessToken || session?.isQaTestSession) return next();
   res.status(401).json({ message: 'Session expired. Please sign in again.', expired: true });
 }
 
