@@ -167,11 +167,31 @@ jobs:
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ env.APP_NAME }}
-          slot-name: Production
-          package: .
+        # azure/webapps-deploy@v3 (single attempt) hit Conflict (CODE: 409)
+        # from OneDeploy 3 times in a row on 2026-08-04 — the /health wait
+        # above ruled out "site still restarting" as the cause, so this now
+        # looks like a stuck Kudu deployment lock, which tends to clear on
+        # its own given enough time. Retrying with real backoff via the raw
+        # CLI instead of a single-shot third-party action.
+        run: |
+          RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
+          zip -r deploy.zip . -x ".git/*" > /dev/null
+
+          MAX_ATTEMPTS=4
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "Deploy attempt $attempt/$MAX_ATTEMPTS..."
+            if az webapp deploy --resource-group "$RG" --name "$APP_NAME" --src-path deploy.zip --type zip --async false; then
+              echo "Deploy succeeded on attempt $attempt."
+              exit 0
+            fi
+            echo "Deploy attempt $attempt failed."
+            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+              echo "Waiting 90s before retry — Kudu deployment conflicts are usually a stuck lock that clears with time..."
+              sleep 90
+            fi
+          done
+          echo "All $MAX_ATTEMPTS deploy attempts failed."
+          exit 1
 
   smoke-test:
     runs-on: ubuntu-latest
