@@ -165,33 +165,52 @@ jobs:
           done
           echo "App did not become responsive in time — proceeding anyway (deploy step has its own retry behavior)."
 
-      - name: Deploy to Azure Web App
-        id: deploy-to-webapp
-        # azure/webapps-deploy@v3 (single attempt) hit Conflict (CODE: 409)
-        # from OneDeploy 3 times in a row on 2026-08-04 — the /health wait
-        # above ruled out "site still restarting" as the cause, so this now
-        # looks like a stuck Kudu deployment lock, which tends to clear on
-        # its own given enough time. Retrying with real backoff via the raw
-        # CLI instead of a single-shot third-party action.
-        run: |
-          RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
-          zip -r deploy.zip . -x ".git/*" > /dev/null
+      # azure/webapps-deploy@v3 packages correctly (gets past "Package
+      # deployment using OneDeploy initiated" every time) but hit Conflict
+      # (CODE: 409) 3 times in a row on 2026-08-04 — the /health wait above
+      # ruled out "site still restarting". A hand-rolled `zip` + `az webapp
+      # deploy` replacement (tried first) was worse: Kudu rejected it
+      # outright with 400 Bad Request, i.e. an invalid package — so the
+      # action's own packaging is kept, just retried, instead of replaced.
+      - name: Deploy to Azure Web App (attempt 1)
+        id: deploy-1
+        uses: azure/webapps-deploy@v3
+        continue-on-error: true
+        with:
+          app-name: ${{ env.APP_NAME }}
+          slot-name: Production
+          package: .
 
-          MAX_ATTEMPTS=4
-          for attempt in $(seq 1 $MAX_ATTEMPTS); do
-            echo "Deploy attempt $attempt/$MAX_ATTEMPTS..."
-            if az webapp deploy --resource-group "$RG" --name "$APP_NAME" --src-path deploy.zip --type zip --async false; then
-              echo "Deploy succeeded on attempt $attempt."
-              exit 0
-            fi
-            echo "Deploy attempt $attempt failed."
-            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-              echo "Waiting 90s before retry — Kudu deployment conflicts are usually a stuck lock that clears with time..."
-              sleep 90
-            fi
-          done
-          echo "All $MAX_ATTEMPTS deploy attempts failed."
-          exit 1
+      - name: Wait before retry 1
+        if: steps.deploy-1.outcome == 'failure'
+        run: |
+          echo "Attempt 1 failed — waiting 90s before retry..."
+          sleep 90
+
+      - name: Deploy to Azure Web App (attempt 2)
+        id: deploy-2
+        if: steps.deploy-1.outcome == 'failure'
+        uses: azure/webapps-deploy@v3
+        continue-on-error: true
+        with:
+          app-name: ${{ env.APP_NAME }}
+          slot-name: Production
+          package: .
+
+      - name: Wait before retry 2
+        if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure'
+        run: |
+          echo "Attempt 2 failed — waiting 90s before retry..."
+          sleep 90
+
+      - name: Deploy to Azure Web App (attempt 3)
+        id: deploy-3
+        if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.APP_NAME }}
+          slot-name: Production
+          package: .
 
   smoke-test:
     runs-on: ubuntu-latest
