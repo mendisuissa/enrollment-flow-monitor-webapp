@@ -125,6 +125,33 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Diagnose — what else is touching this App Service
+        # 9 straight Conflict (CODE: 409) failures survived a portal restart
+        # AND a full Stop/Start — something else is genuinely contending for
+        # this site's deployment lock. Listing recent activity-log entries +
+        # the full raw deployment history (not just what Deployment Center's
+        # UI happens to render) to actually find it instead of guessing again.
+        run: |
+          RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
+          RESOURCE_ID=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].id" -o tsv)
+
+          echo "── Activity log, last 2 hours ──────────────────────────────"
+          az monitor activity-log list \
+            --resource-id "$RESOURCE_ID" \
+            --start-time "$(date -u -d '2 hours ago' '+%Y-%m-%dT%H:%M:%SZ')" \
+            --query "[].{time:eventTimestamp, op:operationName.value, status:status.value, caller:caller}" \
+            -o table || echo "(activity-log query failed — continuing)"
+
+          echo ""
+          echo "── Full raw deployment history (az webapp deployment list) ──"
+          az webapp deployment list --name "$APP_NAME" --resource-group "$RG" \
+            --query "[].{id:id, status:status, active:active, complete:complete, received:received_time, start:start_time, end:end_time, deployer:deployer}" \
+            -o table || echo "(deployment list query failed — continuing)"
+
+          echo ""
+          echo "── Continuous deployment / SCM config ────────────────────────"
+          az webapp deployment source show --name "$APP_NAME" --resource-group "$RG" -o json || echo "(no deployment source configured, or query failed)"
+
       - name: Configure App Service deploy/runtime settings
         run: |
           RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
