@@ -141,11 +141,13 @@ jobs:
           echo "Current scmType: $SCM_TYPE"
           if [ "$SCM_TYPE" != "None" ]; then
             echo "Setting scmType=None to release the deployment lock..."
-            az resource update \
-              --resource-group "$RG" \
-              --resource-type "Microsoft.Web/sites/config" \
-              --name "$APP_NAME/web" \
-              --set properties.scmType=None
+            # az resource update --resource-type "Microsoft.Web/sites/config"
+            # (previous attempt) failed with "Operation returned an invalid
+            # status 'Not Found'" — the hand-built resource path was wrong.
+            # az webapp deployment source delete is the dedicated command
+            # for exactly this (removes the configured CD source, which is
+            # what sets scmType back to None).
+            az webapp deployment source delete --name "$APP_NAME" --resource-group "$RG"
           fi
 
           az webapp config appsettings set --name "$APP_NAME" --resource-group "$RG" --settings \
