@@ -125,39 +125,28 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Diagnose — what else is touching this App Service
-        # 9 straight Conflict (CODE: 409) failures survived a portal restart
-        # AND a full Stop/Start — something else is genuinely contending for
-        # this site's deployment lock. Listing recent activity-log entries +
-        # the full raw deployment history (not just what Deployment Center's
-        # UI happens to render) to actually find it instead of guessing again.
-        run: |
-          RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
-          RESOURCE_ID=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].id" -o tsv)
-
-          echo "── Activity log, last 2 hours ──────────────────────────────"
-          az monitor activity-log list \
-            --resource-id "$RESOURCE_ID" \
-            --start-time "$(date -u -d '2 hours ago' '+%Y-%m-%dT%H:%M:%SZ')" \
-            --query "[].{time:eventTimestamp, op:operationName.value, status:status.value, caller:caller}" \
-            -o table || echo "(activity-log query failed — continuing)"
-
-          echo ""
-          echo "── Full raw deployment history (az webapp deployment list) ──"
-          az webapp deployment list --name "$APP_NAME" --resource-group "$RG" \
-            --query "[].{id:id, status:status, active:active, complete:complete, received:received_time, start:start_time, end:end_time, deployer:deployer}" \
-            -o table || echo "(deployment list query failed — continuing)"
-
-          echo ""
-          echo "── Continuous deployment / SCM config ────────────────────────"
-          az webapp deployment source show --name "$APP_NAME" --resource-group "$RG" -o json || echo "(no deployment source configured, or query failed)"
-
       - name: Configure App Service deploy/runtime settings
         run: |
           RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
           echo "Resource group: $RG"
           IS_LINUX=$(az webapp show --name "$APP_NAME" --resource-group "$RG" --query "reserved" -o tsv)
           echo "isLinux=$IS_LINUX"
+
+          # Disable the built-in SCM/GitHub deployment source so that only
+          # this workflow's azure/webapps-deploy step owns the deployment
+          # lock. When scmType is GitHubAction Azure's own SCM pipeline also
+          # tries to deploy on every push, races with OneDeploy and causes
+          # Conflict (409) failures.
+          SCM_TYPE=$(az webapp config show --name "$APP_NAME" --resource-group "$RG" --query "scmType" -o tsv)
+          echo "Current scmType: $SCM_TYPE"
+          if [ "$SCM_TYPE" != "None" ]; then
+            echo "Setting scmType=None to release the deployment lock..."
+            az resource update \
+              --resource-group "$RG" \
+              --resource-type "Microsoft.Web/sites/config" \
+              --name "$APP_NAME/web" \
+              --set properties.scmType=None
+          fi
 
           az webapp config appsettings set --name "$APP_NAME" --resource-group "$RG" --settings \
             SCM_DO_BUILD_DURING_DEPLOYMENT=false \
@@ -176,13 +165,15 @@ jobs:
         # trigger an implicit site restart. OneDeploy immediately after that
         # was racing the restart and failing with Conflict (409) — seen 3
         # times in a row on 2026-08-04, including one attempt that hung 8+
-        # minutes before conflicting. Poll /health until the site is back
-        # before handing off to the deploy action, instead of assuming the
-        # restart already finished.
+        # minutes before conflicting. Poll the azurewebsites.net hostname
+        # (reliable from the runner; the custom domain may not resolve from
+        # GitHub-hosted runners) until the site is back before handing off
+        # to the deploy action.
         run: |
-          echo "Waiting for $APP_URL to respond after config change..."
+          AZHOST="https://${APP_NAME,,}.azurewebsites.net"
+          echo "Waiting for $AZHOST to respond after config change..."
           for i in $(seq 1 20); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$APP_URL/health" || echo "000")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$AZHOST/health" || echo "000")
             echo "Attempt $i: HTTP $STATUS"
             if [ "$STATUS" = "200" ] || [ "$STATUS" = "204" ]; then
               echo "App is responsive — proceeding to deploy."
@@ -192,13 +183,6 @@ jobs:
           done
           echo "App did not become responsive in time — proceeding anyway (deploy step has its own retry behavior)."
 
-      # azure/webapps-deploy@v3 packages correctly (gets past "Package
-      # deployment using OneDeploy initiated" every time) but hit Conflict
-      # (CODE: 409) 3 times in a row on 2026-08-04 — the /health wait above
-      # ruled out "site still restarting". A hand-rolled `zip` + `az webapp
-      # deploy` replacement (tried first) was worse: Kudu rejected it
-      # outright with 400 Bad Request, i.e. an invalid package — so the
-      # action's own packaging is kept, just retried, instead of replaced.
       - name: Deploy to Azure Web App (attempt 1)
         id: deploy-1
         uses: azure/webapps-deploy@v3
