@@ -234,10 +234,35 @@ jobs:
         id: deploy-3
         if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure'
         uses: azure/webapps-deploy@v3
+        continue-on-error: true
         with:
           app-name: ${{ env.APP_NAME }}
           slot-name: Production
           package: .
+
+      - name: Wait before raw-CLI attempt
+        if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure' && steps.deploy-3.outcome == 'failure'
+        run: |
+          echo "All 3 azure/webapps-deploy@v3 attempts failed — trying az webapp deploy directly before giving up, to tell apart 'the action is wrong' from 'Kudu itself is stuck'."
+          sleep 90
+
+      - name: Deploy to Azure Web App (attempt 4 — raw CLI)
+        id: deploy-4
+        if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure' && steps.deploy-3.outcome == 'failure'
+        # Previous raw-CLI attempt (2026-08-04) got Kudu Status 400, not 409
+        # — a different failure, caused by zipping deploy.zip into itself
+        # (it was written inside the directory being zipped). Writing it
+        # outside the source tree this time, plus verifying the archive
+        # with `zip -T` before uploading, so a bad package can't masquerade
+        # as evidence about the Kudu conflict again.
+        run: |
+          RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
+          ZIP_PATH="$RUNNER_TEMP/deploy.zip"
+          zip -r "$ZIP_PATH" . -x ".git/*" > /dev/null
+          echo "Verifying archive integrity..."
+          zip -T "$ZIP_PATH"
+          echo "Archive size: $(du -h "$ZIP_PATH" | cut -f1)"
+          az webapp deploy --resource-group "$RG" --name "$APP_NAME" --src-path "$ZIP_PATH" --type zip --async false
 
   smoke-test:
     runs-on: ubuntu-latest
