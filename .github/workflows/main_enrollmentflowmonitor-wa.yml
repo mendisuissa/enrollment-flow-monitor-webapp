@@ -185,6 +185,20 @@ jobs:
           done
           echo "App did not become responsive in time — proceeding anyway (deploy step has its own retry behavior)."
 
+      - name: Check Azure Resource Health
+        # scmType=None (previous commit) did NOT fix it — still Conflict
+        # (409) on every attempt. Every client-side/config-side avenue is
+        # now exhausted (packaging, health-wait, retries, scmType, portal
+        # restart, full Stop/Start). Checking whether Azure itself reports a
+        # platform-level issue on this specific resource before concluding
+        # this needs an Azure Support ticket.
+        run: |
+          RESOURCE_ID=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].id" -o tsv)
+          echo "── Resource Health ─────────────────────────────────────────"
+          az rest --method get \
+            --url "https://management.azure.com${RESOURCE_ID}/providers/Microsoft.ResourceHealth/availabilityStatuses/current?api-version=2023-07-01-preview" \
+            -o json || echo "(resource health query failed — continuing)"
+
       - name: Deploy to Azure Web App (attempt 1)
         id: deploy-1
         uses: azure/webapps-deploy@v3
