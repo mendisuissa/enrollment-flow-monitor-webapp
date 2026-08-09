@@ -185,84 +185,63 @@ jobs:
           done
           echo "App did not become responsive in time — proceeding anyway (deploy step has its own retry behavior)."
 
-      - name: Check Azure Resource Health
-        # scmType=None (previous commit) did NOT fix it — still Conflict
-        # (409) on every attempt. Every client-side/config-side avenue is
-        # now exhausted (packaging, health-wait, retries, scmType, portal
-        # restart, full Stop/Start). Checking whether Azure itself reports a
-        # platform-level issue on this specific resource before concluding
-        # this needs an Azure Support ticket.
+      # ── Deploy via WEBSITE_RUN_FROM_PACKAGE, bypassing Kudu/OneDeploy ──
+      # This app has now gone through the exact same failure cycle twice:
+      # scmType fix + retries got it working once (2026-08-09 06:47 UTC,
+      # first-attempt success, clean smoke tests), then a few hours later
+      # it was back to persistent Conflict (409) on every attempt (15:36
+      # UTC same day) with the site returning 504 in production the whole
+      # time. IdentityMonitor hit the identical pattern the same day and
+      # every Kudu-side remedy (scmType, Portal Stop/Start, longer backoff)
+      # proved non-durable there too — only bypassing Kudu entirely with
+      # run-from-package fixed it for good. Applying the same fix here
+      # rather than continuing to fight a mechanism that's proven it
+      # doesn't stay fixed.
+      - name: Zip deploy package
         run: |
-          RESOURCE_ID=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].id" -o tsv)
-          echo "── Resource Health ─────────────────────────────────────────"
-          az rest --method get \
-            --url "https://management.azure.com${RESOURCE_ID}/providers/Microsoft.ResourceHealth/availabilityStatuses/current?api-version=2023-07-01-preview" \
-            -o json || echo "(resource health query failed — continuing)"
+          zip -r "$RUNNER_TEMP/deploy.zip" . -x ".git/*" >/dev/null
+          unzip -l "$RUNNER_TEMP/deploy.zip" | tail -5
 
-      - name: Deploy to Azure Web App (attempt 1)
-        id: deploy-1
-        uses: azure/webapps-deploy@v3
-        continue-on-error: true
-        with:
-          app-name: ${{ env.APP_NAME }}
-          slot-name: Production
-          package: .
-
-      - name: Wait before retry 1
-        if: steps.deploy-1.outcome == 'failure'
+      - name: Upload package to Blob Storage
+        id: upload
         run: |
-          echo "Attempt 1 failed — waiting 90s before retry..."
-          sleep 90
+          ACCOUNT="enrollmentflow"
+          CONTAINER="deploy-packages"
+          BLOB="app-${{ github.sha }}.zip"
 
-      - name: Deploy to Azure Web App (attempt 2)
-        id: deploy-2
-        if: steps.deploy-1.outcome == 'failure'
-        uses: azure/webapps-deploy@v3
-        continue-on-error: true
-        with:
-          app-name: ${{ env.APP_NAME }}
-          slot-name: Production
-          package: .
+          RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
 
-      - name: Wait before retry 2
-        if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure'
-        run: |
-          echo "Attempt 2 failed — waiting 90s before retry..."
-          sleep 90
+          az storage account show --name "$ACCOUNT" --resource-group "$RG" >/dev/null 2>&1 || \
+            az storage account create --name "$ACCOUNT" --resource-group "$RG" \
+              --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 >/dev/null
 
-      - name: Deploy to Azure Web App (attempt 3)
-        id: deploy-3
-        if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure'
-        uses: azure/webapps-deploy@v3
-        continue-on-error: true
-        with:
-          app-name: ${{ env.APP_NAME }}
-          slot-name: Production
-          package: .
+          KEY=$(az storage account keys list --account-name "$ACCOUNT" --resource-group "$RG" --query "[0].value" -o tsv)
 
-      - name: Wait before raw-CLI attempt
-        if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure' && steps.deploy-3.outcome == 'failure'
-        run: |
-          echo "All 3 azure/webapps-deploy@v3 attempts failed — trying az webapp deploy directly before giving up, to tell apart 'the action is wrong' from 'Kudu itself is stuck'."
-          sleep 90
+          az storage container create \
+            --account-name "$ACCOUNT" --account-key "$KEY" \
+            --name "$CONTAINER" --public-access off >/dev/null
 
-      - name: Deploy to Azure Web App (attempt 4 — raw CLI)
-        id: deploy-4
-        if: steps.deploy-1.outcome == 'failure' && steps.deploy-2.outcome == 'failure' && steps.deploy-3.outcome == 'failure'
-        # Previous raw-CLI attempt (2026-08-04) got Kudu Status 400, not 409
-        # — a different failure, caused by zipping deploy.zip into itself
-        # (it was written inside the directory being zipped). Writing it
-        # outside the source tree this time, plus verifying the archive
-        # with `zip -T` before uploading, so a bad package can't masquerade
-        # as evidence about the Kudu conflict again.
+          az storage blob upload \
+            --account-name "$ACCOUNT" --account-key "$KEY" \
+            --container-name "$CONTAINER" --name "$BLOB" \
+            --file "$RUNNER_TEMP/deploy.zip" --overwrite >/dev/null
+
+          EXPIRY=$(date -u -d "+10 years" '+%Y-%m-%dT%H:%MZ')
+          SAS=$(az storage blob generate-sas \
+            --account-name "$ACCOUNT" --account-key "$KEY" \
+            --container-name "$CONTAINER" --name "$BLOB" \
+            --permissions r --expiry "$EXPIRY" -o tsv)
+
+          BLOB_URL="https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}/${BLOB}?${SAS}"
+          echo "::add-mask::$BLOB_URL"
+          echo "blob_url=$BLOB_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Point WEBSITE_RUN_FROM_PACKAGE at the new package
         run: |
           RG=$(az resource list --name "$APP_NAME" --resource-type Microsoft.Web/sites --query "[0].resourceGroup" -o tsv)
-          ZIP_PATH="$RUNNER_TEMP/deploy.zip"
-          zip -r "$ZIP_PATH" . -x ".git/*" > /dev/null
-          echo "Verifying archive integrity..."
-          zip -T "$ZIP_PATH"
-          echo "Archive size: $(du -h "$ZIP_PATH" | cut -f1)"
-          az webapp deploy --resource-group "$RG" --name "$APP_NAME" --src-path "$ZIP_PATH" --type zip --async false
+          az webapp config appsettings set --name "$APP_NAME" --resource-group "$RG" --settings \
+            WEBSITE_RUN_FROM_PACKAGE="${{ steps.upload.outputs.blob_url }}" >/dev/null
+          echo "✅ WEBSITE_RUN_FROM_PACKAGE updated — app restarts and mounts the new package"
 
   smoke-test:
     runs-on: ubuntu-latest
