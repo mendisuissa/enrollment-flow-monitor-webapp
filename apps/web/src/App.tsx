@@ -2273,7 +2273,12 @@ export default function App() {
           const subRes = await fetch('/api/subscription/status', { credentials: 'include' });
           const subData = await subRes.json();
           setIsSubscribed(subData.subscribed === true);
-        } catch {
+        } catch (err) {
+          // A transient network/parse failure here used to silently push a
+          // legitimately-subscribed user into isTrialExpired gating (OCR,
+          // export, and other actions disabled) with zero indication this
+          // was a fetch error rather than an actual expired trial.
+          console.warn('Subscription status check failed — treating as unsubscribed for this session:', err);
           setIsSubscribed(false);
         }
       }

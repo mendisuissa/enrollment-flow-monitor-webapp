@@ -39,7 +39,15 @@ function applySecurityHeaders(_req: express.Request, res: express.Response, next
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; " +
-        "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://www.google-analytics.com https://region1.google-analytics.com https://cdn.jsdelivr.net; " +
+        // tessdata.projectnaptha.com: confirmed live (2026-08-11) as the actual
+        // cause of "OCR completely broken" — tesseract.js's recognize() call
+        // (App.tsx) only overrides workerPath, not langPath, so it falls back to
+        // fetching eng.traineddata.gz from its default CDN. That fetch was
+        // silently blocked by this connect-src allowlist in production on every
+        // single attempt; the worker script itself (self-hosted, already
+        // allowed) loaded fine, which is why an earlier "is the worker file
+        // live?" check didn't catch this.
+        "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://www.google-analytics.com https://region1.google-analytics.com https://cdn.jsdelivr.net https://tessdata.projectnaptha.com; " +
         "img-src 'self' data: https:; " +
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
         "font-src 'self' https://fonts.gstatic.com; " +
