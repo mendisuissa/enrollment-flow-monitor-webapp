@@ -28,7 +28,8 @@ export async function graphRequest<T>(accessToken: string, path: string, maxRetr
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json'
-      }
+      },
+      signal: AbortSignal.timeout(20000)
     });
 
     if (response.ok) {

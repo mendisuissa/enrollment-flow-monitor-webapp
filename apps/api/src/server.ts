@@ -12,6 +12,33 @@ import { apiRouter } from './routes/api.js';
 import { subscriptionRouter } from './routes/subscriptions.js';
 import { PrismaSessionStore } from './storage/sessionStore.js';
 
+// ── Crash visibility ──────────────────────────────────────────────────────
+// There is no process supervisor around this app (Azure's startup command is
+// a bare `node out/apps/api/server.js` — no pm2/forever, and autoHeal is
+// off), so today an uncaughtException or unhandledRejection anywhere kills
+// the whole process silently and the site stays down until an external
+// restart (Azure's own unhealthy-instance replacement, or the supervisor
+// agent's periodic check) eventually cycles the container — observed to take
+// well over the ~20s the external health re-check assumes. These handlers
+// don't change that recovery story (still no in-process restart — that's a
+// deliberate, separate decision), they just make sure the fatal error is
+// logged with a stack trace before the process goes down, instead of the
+// container simply going dark with nothing to explain why.
+process.on('uncaughtException', (err) => {
+  logger.error({ err, memoryUsage: process.memoryUsage(), uptimeSeconds: process.uptime() }, 'FATAL: uncaughtException — process exiting');
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error({ err: reason, memoryUsage: process.memoryUsage(), uptimeSeconds: process.uptime() }, 'FATAL: unhandledRejection — process exiting');
+  process.exit(1);
+});
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => {
+    logger.info({ signal: sig, uptimeSeconds: process.uptime() }, 'Received shutdown signal — exiting');
+    process.exit(0);
+  });
+}
+
 const app = express();
 const isProduction = config.nodeEnv === 'production';
 const currentFilePath = fileURLToPath(import.meta.url);

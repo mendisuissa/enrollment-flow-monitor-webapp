@@ -538,6 +538,7 @@ async function graphPostAction(accessToken: string, path: string, body?: string)
       Accept: 'application/json',
       'Content-Type': 'application/json'
     },
+    signal: AbortSignal.timeout(20000),
     ...(body ? { body } : {})
   });
 
@@ -867,7 +868,8 @@ apiRouter.get('/view/:view', async (req, res) => {
       const devicesUrl = 'https://graph.microsoft.com/v1.0/deviceManagement/managedDevices' +
         '?$top=200&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName';
       const devRes = await fetch(devicesUrl, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(20000)
       });
       const devJson = devRes.ok ? await devRes.json().catch(() => ({ value: [] })) : { value: [] };
       const devices = (devJson.value ?? []).map((d: any) => ({
@@ -988,7 +990,7 @@ Last Sync: ${d.lastSyncDateTime}`
         if (token) {
           const G = 'https://graph.microsoft.com';
           const hdr = { Authorization: 'Bearer ' + token, Accept: 'application/json' };
-          const efRes = await fetch(G + '/v1.0/deviceManagement/troubleshootingEvents?$top=200&$orderby=eventDateTime desc', { headers: hdr });
+          const efRes = await fetch(G + '/v1.0/deviceManagement/troubleshootingEvents?$top=200&$orderby=eventDateTime desc', { headers: hdr, signal: AbortSignal.timeout(20000) });
           if (efRes.ok) {
             const efData: any = await efRes.json();
             const items: any[] = (efData.value ?? []).filter((item: any) =>
@@ -1087,7 +1089,8 @@ apiRouter.post('/graph/proxy', async (req, res) => {
     }
 
     const response = await fetch(`https://graph.microsoft.com${path}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(20000)
     });
 
     const data = await response.json();
@@ -1113,6 +1116,7 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
 
     const response = await fetch(url, {
       headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+      signal: AbortSignal.timeout(20000)
     });
 
     if (!response.ok) {
@@ -1120,7 +1124,7 @@ apiRouter.get('/graph/enrollment-failures', async (req, res) => {
       const msg = (errData as any)?.error?.message ?? response.statusText;
       const fallbackRes = await fetch(
         GRAPH + "/v1.0/deviceManagement/managedDevices?$filter=complianceState eq 'noncompliant' or complianceState eq 'unknown'&$select=id,deviceName,operatingSystem,osVersion,complianceState,lastSyncDateTime,userPrincipalName,deviceEnrollmentType&$top=200",
-        { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } }
+        { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) }
       );
       if (!fallbackRes.ok) {
         return res.status(response.status).json({ message: 'Enrollment failures unavailable: ' + msg, rows: [] });
@@ -1179,10 +1183,10 @@ apiRouter.get('/graph/enrollment-policy', async (req, res) => {
     const hdr = { Authorization: 'Bearer ' + token, Accept: 'application/json' };
 
     const [configsRes, mgmtRes, autopilotRes] = await Promise.all([
-      fetch(G + '/v1.0/deviceManagement/deviceEnrollmentConfigurations?$top=50', { headers: hdr }),
-      fetch(G + '/v1.0/deviceManagement', { headers: hdr }),
+      fetch(G + '/v1.0/deviceManagement/deviceEnrollmentConfigurations?$top=50', { headers: hdr, signal: AbortSignal.timeout(20000) }),
+      fetch(G + '/v1.0/deviceManagement', { headers: hdr, signal: AbortSignal.timeout(20000) }),
       // No $select — use full payload to avoid OData property errors
-      fetch(G + '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$top=200', { headers: hdr }),
+      fetch(G + '/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$top=200', { headers: hdr, signal: AbortSignal.timeout(20000) }),
     ]);
 
     // Parse enrollment configurations
@@ -1347,7 +1351,7 @@ apiRouter.get('/graph/compliance-drift', async (req, res) => {
     let allDevices: any[] = [];
     let url: string | null = G + '/v1.0/deviceManagement/managedDevices?$select=id,complianceState&$top=999';
     while (url) {
-      const r: any = await fetch(url, { headers: hdr });
+      const r: any = await fetch(url, { headers: hdr, signal: AbortSignal.timeout(20000) });
       if (!r.ok) break;
       const data: any = await r.json();
       allDevices = allDevices.concat(data.value ?? []);
